@@ -2,9 +2,6 @@ import psycopg2
 import psycopg2.extras
 import os
 
-# ================================
-#  Подключение к PostgreSQL
-# ================================
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -94,3 +91,4 @@ def init_db():
 
     conn.commit()
     conn.close()
+
