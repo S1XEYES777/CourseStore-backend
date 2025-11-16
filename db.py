@@ -1,12 +1,18 @@
+import psycopg2
+import psycopg2.extras
 import os
-import sqlite3
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "course_store.db")
+# ================================
+#  Подключение к PostgreSQL
+# ================================
 
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore"
+)
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
     return conn
 
 
@@ -14,12 +20,10 @@ def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # -----------------------------
-    #   Таблица пользователей
-    # -----------------------------
+    # ========= USERS ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         phone TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
@@ -27,12 +31,10 @@ def init_db():
     );
     """)
 
-    # -----------------------------
-    #   Таблица курсов
-    # -----------------------------
+    # ========= COURSES ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS courses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         price INTEGER NOT NULL,
         author TEXT NOT NULL,
@@ -41,12 +43,10 @@ def init_db():
     );
     """)
 
-    # -----------------------------
-    #   Таблица уроков
-    # -----------------------------
+    # ========= LESSONS ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS lessons (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         course_id INTEGER NOT NULL,
         title TEXT NOT NULL,
         youtube_url TEXT NOT NULL,
@@ -55,12 +55,10 @@ def init_db():
     );
     """)
 
-    # -----------------------------
-    #   Таблица корзины
-    # -----------------------------
+    # ========= CART ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS cart_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         course_id INTEGER NOT NULL,
         FOREIGN KEY(user_id) REFERENCES users(id),
@@ -68,46 +66,31 @@ def init_db():
     );
     """)
 
-    # -----------------------------
-    #   Таблица покупок
-    # -----------------------------
+    # ========= PURCHASES ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS purchases (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         course_id INTEGER NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(course_id) REFERENCES courses(id)
     );
     """)
 
-    # -----------------------------
-    #   Таблица отзывов
-    # -----------------------------
+    # ========= REVIEWS ==========
     cur.execute("""
     CREATE TABLE IF NOT EXISTS reviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         course_id INTEGER NOT NULL,
         rating INTEGER NOT NULL,
         text TEXT NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(course_id) REFERENCES courses(id)
     );
     """)
 
-    # -----------------------------
-    #   Создать папку для изображений
-    # -----------------------------
-    images_folder = os.path.join(os.path.dirname(__file__), "static", "images")
-    os.makedirs(images_folder, exist_ok=True)
-
     conn.commit()
     conn.close()
-
-
-if __name__ == "__main__":
-    init_db()
-    print("Database initialized.")
