@@ -6,7 +6,7 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore?sslmode=require"
 )
-#Obnova1
+#Obnova2
 
 def get_connection():
     conn = psycopg2.connect(DATABASE_URL, sslmode="require")
@@ -91,6 +91,7 @@ def init_db():
 
     conn.commit()
     conn.close()
+
 
 
 
