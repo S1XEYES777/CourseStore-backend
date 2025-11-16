@@ -4,6 +4,7 @@ from db import get_connection
 
 courses_bp = Blueprint("courses", __name__)
 
+
 # =========================================================
 # GET /api/courses — список всех курсов
 # =========================================================
@@ -54,7 +55,7 @@ def get_course():
     cur.execute("""
         SELECT id, title, price, author, description, image_path
         FROM courses
-        WHERE id = ?
+        WHERE id = %s
     """, (course_id,))
     c = cur.fetchone()
 
@@ -65,9 +66,10 @@ def get_course():
     cur.execute("""
         SELECT id, title, youtube_url, position
         FROM lessons
-        WHERE course_id = ?
+        WHERE course_id = %s
         ORDER BY position ASC
     """, (course_id,))
+
     lessons = [{
         "id": r["id"],
         "title": r["title"],
@@ -116,9 +118,11 @@ def admin_add_course():
 
     cur.execute("""
         INSERT INTO courses (title, price, author, description)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
     """, (title, price, author, description))
-    course_id = cur.lastrowid
+
+    course_id = cur.fetchone()["id"]
 
     image_path = None
 
@@ -134,7 +138,7 @@ def admin_add_course():
                 f.write(img_bytes)
 
             cur.execute(
-                "UPDATE courses SET image_path=? WHERE id=?",
+                "UPDATE courses SET image_path=%s WHERE id=%s",
                 (image_path, course_id)
             )
 
@@ -156,7 +160,7 @@ def update_course():
 
     cid = data.get("id")
     title = data.get("title", "").strip()
-    price = data.get("price", "")
+    price = int(data.get("price", 0))
     author = data.get("author", "").strip()
     description = data.get("description", "").strip()
     image_b64 = data.get("image")
@@ -169,8 +173,8 @@ def update_course():
 
     cur.execute("""
         UPDATE courses
-        SET title=?, price=?, author=?, description=?
-        WHERE id=?
+        SET title=%s, price=%s, author=%s, description=%s
+        WHERE id=%s
     """, (title, price, author, description, cid))
 
     # Если есть новая картинка — заменить
@@ -185,9 +189,10 @@ def update_course():
                 f.write(img_bytes)
 
             cur.execute(
-                "UPDATE courses SET image_path=? WHERE id=?",
+                "UPDATE courses SET image_path=%s WHERE id=%s",
                 (image_path, cid)
             )
+
         except Exception as e:
             print("Ошибка изображения:", e)
 
@@ -211,10 +216,12 @@ def delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM lessons WHERE course_id=?", (cid,))
-    cur.execute("DELETE FROM purchases WHERE course_id=?", (cid,))
-    cur.execute("DELETE FROM cart_items WHERE course_id=?", (cid,))
-    cur.execute("DELETE FROM courses WHERE id=?", (cid,))
+    # Удаляем связанные записи
+    cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
     conn.close()
