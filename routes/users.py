@@ -5,8 +5,9 @@ users_bp = Blueprint("users", __name__)
 
 
 # ====================================================================
-# GET /api/admin/users — Получить всех пользователей (для Admin.py)
+# GET /api/admin/users — Получить всех пользователей
 # ====================================================================
+@users_bp.get("/api/admin/users")
 def admin_get_users():
     conn = get_connection()
     cur = conn.cursor()
@@ -24,7 +25,7 @@ def admin_get_users():
         "id": r["id"],
         "name": r["name"],
         "phone": r["phone"],
-        "password": r["password"],      # Admin.py должен видеть пароль!
+        "password": r["password"],  # Admin может видеть пароль
         "balance": r["balance"],
     } for r in rows]
 
@@ -34,6 +35,7 @@ def admin_get_users():
 # ====================================================================
 # POST /api/admin/users/update — изменить пользователя
 # ====================================================================
+@users_bp.post("/api/admin/users/update")
 def admin_update_user():
     data = request.get_json(force=True)
 
@@ -56,8 +58,8 @@ def admin_update_user():
 
     cur.execute("""
         UPDATE users
-        SET name = ?, phone = ?, password = ?, balance = ?
-        WHERE id = ?
+        SET name = %s, phone = %s, password = %s, balance = %s
+        WHERE id = %s
     """, (name, phone, password, balance, user_id))
 
     conn.commit()
@@ -69,6 +71,7 @@ def admin_update_user():
 # ====================================================================
 # POST /api/admin/users/delete — удалить пользователя
 # ====================================================================
+@users_bp.post("/api/admin/users/delete")
 def admin_delete_user():
     data = request.get_json(force=True)
     user_id = data.get("id")
@@ -79,16 +82,15 @@ def admin_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Сначала удаляем покупки и корзину
-    cur.execute("DELETE FROM purchases WHERE user_id = ?", (user_id,))
-    cur.execute("DELETE FROM cart_items WHERE user_id = ?", (user_id,))
-    cur.execute("DELETE FROM reviews WHERE user_id = ?", (user_id,))
+    # Удаляем данные из зависимых таблиц
+    cur.execute("DELETE FROM purchases WHERE user_id = %s", (user_id,))
+    cur.execute("DELETE FROM cart_items  WHERE user_id = %s", (user_id,))
+    cur.execute("DELETE FROM reviews     WHERE user_id = %s", (user_id,))
 
     # Удаляем самого пользователя
-    cur.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
     conn.commit()
     conn.close()
 
     return jsonify({"status": "ok"})
-
