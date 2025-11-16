@@ -9,6 +9,7 @@ from routes.courses import courses_bp
 from routes.lessons import lessons_bp
 from routes.reviews import reviews_bp
 from routes.cart import cart_bp
+from routes.admin import admin_bp
 
 from db import init_db
 
@@ -31,6 +32,8 @@ app.register_blueprint(courses_bp)
 app.register_blueprint(lessons_bp)
 app.register_blueprint(reviews_bp)
 app.register_blueprint(cart_bp)
+app.register_blueprint(admin_bp)
+
 
 
 @app.get("/api/health")
@@ -47,5 +50,6 @@ if __name__ == "__main__":
 
     # Запуск сервера
     app.run(host="0.0.0.0", port=5000, debug=True)
+
 
 
