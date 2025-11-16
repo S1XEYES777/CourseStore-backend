@@ -3,7 +3,6 @@ from db import get_connection
 
 lessons_bp = Blueprint("lessons", __name__)
 
-
 # =========================================================
 # GET /api/lessons — получить уроки курса
 # =========================================================
@@ -35,6 +34,30 @@ def get_lessons(course_id):
     return jsonify({"status": "ok", "lessons": lessons})
 
 
+# =========================================================
+# NORMALIZE YOUTUBE LINKS
+# =========================================================
+def normalize_youtube_url(url: str) -> str:
+    url = url.strip()
+
+    if not url:
+        return ""
+
+    # https://youtu.be/ID
+    if "youtu.be/" in url:
+        return "https://youtu.be/" + url.split("youtu.be/")[1].split("?")[0]
+
+    # https://youtube.com/watch?v=ID
+    if "watch?v=" in url:
+        vid = url.split("watch?v=")[1].split("&")[0]
+        return f"https://youtu.be/{vid}"
+
+    # Только ID (8–20 символов)
+    if len(url) >= 8 and len(url) <= 20 and " " not in url:
+        return f"https://youtu.be/{url}"
+
+    return url
+
 
 # =========================================================
 # POST /api/lessons/add — добавить урок
@@ -45,9 +68,18 @@ def add_lesson():
 
     course_id = int(data.get("course_id", 0))
     title = data.get("title", "").strip()
-    link = data.get("link", "").strip()
 
-    if not course_id or not title or not link:
+    # 🟢 FIX: принимаем и youtube_url и link и url
+    raw_link = (
+        data.get("youtube_url")
+        or data.get("link")
+        or data.get("url")
+        or ""
+    ).strip()
+
+    youtube_url = normalize_youtube_url(raw_link)
+
+    if not course_id or not title or not youtube_url:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
     conn = get_connection()
@@ -60,7 +92,7 @@ def add_lesson():
     cur.execute("""
         INSERT INTO lessons (course_id, title, youtube_url, position)
         VALUES (?, ?, ?, ?)
-    """, (course_id, title, link, pos))
+    """, (course_id, title, youtube_url, pos))
 
     conn.commit()
     lesson_id = cur.lastrowid
@@ -88,4 +120,3 @@ def delete_lesson():
     conn.close()
 
     return jsonify({"status": "ok"})
-
