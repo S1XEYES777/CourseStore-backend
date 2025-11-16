@@ -3,6 +3,7 @@ from db import get_connection
 
 lessons_bp = Blueprint("lessons", __name__)
 
+
 # =========================================================
 # GET /api/lessons — получить уроки курса
 # =========================================================
@@ -17,7 +18,7 @@ def get_lessons(course_id):
     cur.execute("""
         SELECT id, title, youtube_url, position
         FROM lessons
-        WHERE course_id = ?
+        WHERE course_id = %s
         ORDER BY position ASC
     """, (course_id,))
 
@@ -53,7 +54,7 @@ def normalize_youtube_url(url: str) -> str:
         return f"https://youtu.be/{vid}"
 
     # Только ID (8–20 символов)
-    if len(url) >= 8 and len(url) <= 20 and " " not in url:
+    if 8 <= len(url) <= 20 and " " not in url:
         return f"https://youtu.be/{url}"
 
     return url
@@ -69,7 +70,6 @@ def add_lesson():
     course_id = int(data.get("course_id", 0))
     title = data.get("title", "").strip()
 
-    # 🟢 FIX: принимаем и youtube_url и link и url
     raw_link = (
         data.get("youtube_url")
         or data.get("link")
@@ -85,17 +85,19 @@ def add_lesson():
     conn = get_connection()
     cur = conn.cursor()
 
-    # новая позиция = последний номер + 1
-    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM lessons WHERE course_id = ?", (course_id,))
+    # Находим следующую позицию
+    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM lessons WHERE course_id = %s", (course_id,))
     pos = cur.fetchone()[0]
 
     cur.execute("""
         INSERT INTO lessons (course_id, title, youtube_url, position)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
     """, (course_id, title, youtube_url, pos))
 
+    lesson_id = cur.fetchone()["id"]
+
     conn.commit()
-    lesson_id = cur.lastrowid
     conn.close()
 
     return jsonify({"status": "ok", "lesson_id": lesson_id})
@@ -115,7 +117,7 @@ def delete_lesson():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+    cur.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
     conn.commit()
     conn.close()
 
