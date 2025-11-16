@@ -7,9 +7,8 @@ lessons_bp = Blueprint("lessons", __name__)
 # =========================================================
 # GET /api/lessons — получить уроки курса
 # =========================================================
-@lessons_bp.get("/api/lessons")
-def get_lessons():
-    course_id = request.args.get("course_id", type=int)
+@lessons_bp.get("/api/lessons/<int:course_id>")
+def get_lessons(course_id):
     if not course_id:
         return jsonify({"status": "error", "message": "Нет course_id"}), 400
 
@@ -29,11 +28,12 @@ def get_lessons():
     lessons = [{
         "id": r["id"],
         "title": r["title"],
-        "link": r["youtube_url"],
+        "youtube_url": r["youtube_url"],
         "position": r["position"]
     } for r in rows]
 
     return jsonify({"status": "ok", "lessons": lessons})
+
 
 
 # =========================================================
@@ -88,3 +88,4 @@ def delete_lesson():
     conn.close()
 
     return jsonify({"status": "ok"})
+
