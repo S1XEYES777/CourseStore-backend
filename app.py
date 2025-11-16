@@ -31,7 +31,6 @@ app.register_blueprint(courses_bp)
 app.register_blueprint(lessons_bp)
 app.register_blueprint(reviews_bp)
 app.register_blueprint(cart_bp)
-app.register_blueprint(admin_bp)
 
 
 @app.get("/api/health")
@@ -48,4 +47,5 @@ if __name__ == "__main__":
 
     # Запуск сервера
     app.run(host="0.0.0.0", port=5000, debug=True)
+
 
