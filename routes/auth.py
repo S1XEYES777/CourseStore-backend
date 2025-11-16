@@ -20,14 +20,20 @@ def register():
     cur = conn.cursor()
 
     try:
+        cur.execute("SELECT id FROM users WHERE phone = %s", (phone,))
+        if cur.fetchone():
+            conn.close()
+            return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
+
         cur.execute("""
-            INSERT INTO users (name, phone, password)
-            VALUES (%s, %s, %s)
+            INSERT INTO users (name, phone, password, balance)
+            VALUES (%s, %s, %s, 0)
             RETURNING id, name, phone, balance
         """, (name, phone, password))
 
         user = cur.fetchone()
         conn.commit()
+        conn.close()
 
         return jsonify({
             "status": "ok",
@@ -38,14 +44,14 @@ def register():
                 "balance": user[3]
             }
         })
-    except:
-        return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
-    finally:
+
+    except Exception as e:
         conn.close()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ============================
-#      ВХОД
+#          ВХОД
 # ============================
 @auth_bp.post("/api/login")
 def login():
