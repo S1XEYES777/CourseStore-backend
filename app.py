@@ -1,11 +1,8 @@
 from flask import Flask
 from flask_cors import CORS
 
-# =====================================
-# 1) Правильный импорт и создание БД
-# =====================================
-from init_db import init_db
-init_db()   # <-- создаёт таблицы если их нет
+from db import init_db        # ← ВАЖНО: используем только ЭТО init_db!
+init_db()                     # ← и вызываем ТОЛЬКО ОДИН раз
 
 # Импорт маршрутов
 from routes.auth import auth_bp
@@ -17,21 +14,18 @@ from routes.cart import cart_bp
 from routes.admin import admin_bp
 
 
-# =====================================
-# 2) Flask App
-# =====================================
 app = Flask(
     __name__,
-    static_folder="static",
-    static_url_path="/static"
+    static_folder="static",       # Папка со статикой
+    static_url_path="/static"     # URL для статики
 )
 
-CORS(app)
+CORS(app)  # Разрешаем доступ фронтенду и Tkinter
 
 
-# =====================================
-# 3) Регистрация Blueprint
-# =====================================
+# -------------------------------------
+#        РЕГИСТРАЦИЯ МАРШРУТОВ
+# -------------------------------------
 app.register_blueprint(auth_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(courses_bp)
@@ -41,17 +35,17 @@ app.register_blueprint(cart_bp)
 app.register_blueprint(admin_bp)
 
 
-# =====================================
-# 4) Для проверки что сервер работает
-# =====================================
+# -------------------------------------
+#   ПРОВЕРКА РАБОТЫ СЕРВЕРА
+# -------------------------------------
 @app.get("/api/ping")
 def ping():
     return {"status": "ok"}
 
 
-# =====================================
-# 5) Запуск (Render использует это)
-# =====================================
+# -------------------------------------
+#   ЗАПУСК ПРИ ЛОКАЛЬНОМ СТАРТЕ
+# -------------------------------------
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
