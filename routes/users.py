@@ -7,7 +7,6 @@ users_bp = Blueprint("users", __name__)
 # ====================================================================
 # GET /api/admin/users — Получить всех пользователей (для Admin.py)
 # ====================================================================
-@users_bp.get("/api/admin/users")
 def admin_get_users():
     conn = get_connection()
     cur = conn.cursor()
@@ -35,7 +34,6 @@ def admin_get_users():
 # ====================================================================
 # POST /api/admin/users/update — изменить пользователя
 # ====================================================================
-@users_bp.post("/api/admin/users/update")
 def admin_update_user():
     data = request.get_json(force=True)
 
@@ -71,7 +69,6 @@ def admin_update_user():
 # ====================================================================
 # POST /api/admin/users/delete — удалить пользователя
 # ====================================================================
-@users_bp.post("/api/admin/users/delete")
 def admin_delete_user():
     data = request.get_json(force=True)
     user_id = data.get("id")
@@ -94,3 +91,4 @@ def admin_delete_user():
     conn.close()
 
     return jsonify({"status": "ok"})
+
