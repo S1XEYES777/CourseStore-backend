@@ -4,6 +4,9 @@ from db import get_connection
 reviews_bp = Blueprint("reviews", __name__)
 
 
+# =========================================================
+# GET /api/reviews — получить отзывы курса
+# =========================================================
 @reviews_bp.get("/api/reviews")
 def get_reviews():
     course_id = request.args.get("course_id", type=int)
@@ -17,7 +20,7 @@ def get_reviews():
         SELECT r.id, r.rating, r.text, r.created_at, u.name AS user_name
         FROM reviews r
         JOIN users u ON r.user_id = u.id
-        WHERE r.course_id = ?
+        WHERE r.course_id = %s
         ORDER BY r.created_at DESC
     """, (course_id,))
 
@@ -35,6 +38,9 @@ def get_reviews():
     return jsonify({"status": "ok", "reviews": reviews})
 
 
+# =========================================================
+# POST /api/review/add — добавить отзыв
+# =========================================================
 @reviews_bp.post("/api/review/add")
 def add_review():
     data = request.get_json(force=True)
@@ -52,7 +58,7 @@ def add_review():
 
     cur.execute("""
         INSERT INTO reviews (user_id, course_id, rating, text)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
     """, (user_id, course_id, rating, text))
 
     conn.commit()
