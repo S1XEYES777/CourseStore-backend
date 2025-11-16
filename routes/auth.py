@@ -3,15 +3,16 @@ from db import get_connection
 
 auth_bp = Blueprint("auth", __name__)
 
+
 # ============================
 #      РЕГИСТРАЦИЯ
 # ============================
 @auth_bp.post("/api/register")
 def register():
     data = request.get_json()
-    name = data.get("name")
-    phone = data.get("phone")
-    password = data.get("password")
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
     if not name or not phone or not password:
         return jsonify({"status": "error", "message": "Заполните все поля"}), 400
@@ -19,35 +20,31 @@ def register():
     conn = get_connection()
     cur = conn.cursor()
 
-    try:
-        cur.execute("SELECT id FROM users WHERE phone = %s", (phone,))
-        if cur.fetchone():
-            conn.close()
-            return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
-
-        cur.execute("""
-            INSERT INTO users (name, phone, password, balance)
-            VALUES (%s, %s, %s, 0)
-            RETURNING id, name, phone, balance
-        """, (name, phone, password))
-
-        user = cur.fetchone()
-        conn.commit()
+    # Проверка телефона
+    cur.execute("SELECT id FROM users WHERE phone = %s", (phone,))
+    if cur.fetchone():
         conn.close()
+        return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
 
-        return jsonify({
-            "status": "ok",
-            "user": {
-                "user_id": user[0],
-                "name": user[1],
-                "phone": user[2],
-                "balance": user[3]
-            }
-        })
+    # Создаём пользователя и сразу читаем его обратно
+    cur.execute("""
+        INSERT INTO users (name, phone, password, balance)
+        VALUES (%s, %s, %s, 0)
+        RETURNING id, name, phone, balance
+    """, (name, phone, password))
 
-    except Exception as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 500
+    user = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    user_obj = {
+        "user_id": user["id"],
+        "name": user["name"],
+        "phone": user["phone"],
+        "balance": user["balance"],
+    }
+
+    return jsonify({"status": "ok", "user": user_obj})
 
 
 # ============================
@@ -56,30 +53,32 @@ def register():
 @auth_bp.post("/api/login")
 def login():
     data = request.get_json()
-    phone = data.get("phone")
-    password = data.get("password")
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not phone or not password:
+        return jsonify({"status": "error", "message": "Заполните телефон и пароль"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, name, phone, balance 
-        FROM users 
-        WHERE phone=%s AND password=%s
+        SELECT id, name, phone, balance
+        FROM users
+        WHERE phone = %s AND password = %s
     """, (phone, password))
 
-    user = cur.fetchone()
+    row = cur.fetchone()
     conn.close()
 
-    if not user:
+    if not row:
         return jsonify({"status": "error", "message": "Неверный телефон или пароль"}), 400
 
-    return jsonify({
-        "status": "ok",
-        "user": {
-            "user_id": user[0],
-            "name": user[1],
-            "phone": user[2],
-            "balance": user[3]
-        }
-    })
+    user_obj = {
+        "user_id": row["id"],
+        "name": row["name"],
+        "phone": row["phone"],
+        "balance": row["balance"],
+    }
+
+    return jsonify({"status": "ok", "user": user_obj})
