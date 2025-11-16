@@ -9,7 +9,6 @@ from routes.courses import courses_bp
 from routes.lessons import lessons_bp
 from routes.reviews import reviews_bp
 from routes.cart import cart_bp
-from routes.admin import admin_bp
 
 from db import init_db
 
@@ -49,3 +48,4 @@ if __name__ == "__main__":
 
     # Запуск сервера
     app.run(host="0.0.0.0", port=5000, debug=True)
+
