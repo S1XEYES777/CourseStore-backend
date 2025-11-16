@@ -11,7 +11,7 @@ admin_bp = Blueprint("admin", __name__)
 def admin_get_users():
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, phone, balance FROM users")
+    cur.execute("SELECT id, name, phone, balance FROM users ORDER BY id")
     rows = cur.fetchall()
     conn.close()
 
@@ -32,9 +32,9 @@ def admin_get_users():
 def admin_update_user():
     data = request.get_json(force=True)
     uid = data.get("id")
-    name = data.get("name", "").strip()
-    phone = data.get("phone", "").strip()
-    password = data.get("password", "").strip()
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
     balance = data.get("balance", 0)
 
     if not uid:
@@ -45,8 +45,11 @@ def admin_update_user():
 
     cur.execute("""
         UPDATE users
-        SET name = ?, phone = ?, password = ?, balance = ?
-        WHERE id = ?
+        SET name = %s,
+            phone = %s,
+            password = %s,
+            balance = %s
+        WHERE id = %s
     """, (name, phone, password, balance, uid))
 
     conn.commit()
@@ -68,7 +71,9 @@ def admin_delete_user():
 
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE id = ?", (uid,))
+
+    cur.execute("DELETE FROM users WHERE id = %s", (uid,))
+
     conn.commit()
     conn.close()
 
@@ -88,7 +93,9 @@ def admin_delete_lesson():
 
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM lessons WHERE id = ?", (lid,))
+
+    cur.execute("DELETE FROM lessons WHERE id = %s", (lid,))
+
     conn.commit()
     conn.close()
 
@@ -96,7 +103,7 @@ def admin_delete_lesson():
 
 
 # ============================================================
-# Удалить курс (+ уроки этого курса)
+# Удалить курс (+ уроки + покупки)
 # ============================================================
 @admin_bp.post("/api/admin/course/delete")
 def admin_delete_course():
@@ -109,9 +116,14 @@ def admin_delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM lessons WHERE course_id = ?", (cid,))
-    cur.execute("DELETE FROM purchases WHERE course_id = ?", (cid,))
-    cur.execute("DELETE FROM courses WHERE id = ?", (cid,))
+    # Удаляем связанные записи
+    cur.execute("DELETE FROM lessons WHERE course_id = %s", (cid,))
+    cur.execute("DELETE FROM purchases WHERE course_id = %s", (cid,))
+    cur.execute("DELETE FROM cart_items WHERE course_id = %s", (cid,))
+    cur.execute("DELETE FROM reviews WHERE course_id = %s", (cid,))
+
+    # Удаляем сам курс
+    cur.execute("DELETE FROM courses WHERE id = %s", (cid,))
 
     conn.commit()
     conn.close()
