@@ -8,16 +8,21 @@ DATABASE_URL = os.getenv(
 )
 
 def get_connection():
-    """Открытие подключения с корректным DictCursor"""
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    conn.autocommit = True
-    return conn
+    """
+    Правильное подключение PostgreSQL с DictCursor
+    чтобы row["id"] и row["title"] работали везде.
+    """
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
 
 
 def init_db():
     """Создание таблиц"""
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor()
 
     # USERS
     cur.execute("""
@@ -91,6 +96,7 @@ def init_db():
         );
     """)
 
+    conn.commit()
     conn.close()
 
 
