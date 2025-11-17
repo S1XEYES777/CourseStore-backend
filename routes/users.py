@@ -6,7 +6,7 @@ users_bp = Blueprint("users", __name__)
 
 
 # ============================================================
-# 📌 Получение всех пользователей (внутренняя функция)
+# 📌 Получение всех пользователей
 # ============================================================
 
 def get_all_users():
@@ -22,20 +22,20 @@ def get_all_users():
     rows = cur.fetchall()
     conn.close()
 
-    return rows  # уже dict list (RealDictCursor)
+    return rows
 
 
 # ============================================================
-# 📌 API для Tkinter (основные маршруты)
+# 📌 Tkinter API
 # ============================================================
 
-# --- Получить всех пользователей ---
+# --- Получить всех ---
 @users_bp.get("/api/users")
 def api_get_users():
     return jsonify({"status": "ok", "users": get_all_users()})
 
 
-# --- Обновить пользователя ---
+# --- Обновить ---
 @users_bp.post("/api/users/update")
 def api_update_user():
     data = request.get_json(force=True)
@@ -57,15 +57,11 @@ def api_update_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    try:
-        cur.execute("""
-            UPDATE users
-            SET name=%s, phone=%s, password=%s, balance=%s
-            WHERE id=%s
-        """, (name, phone, password, balance, uid))
-    except Exception as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 400
+    cur.execute("""
+        UPDATE users
+        SET name=%s, phone=%s, password=%s, balance=%s
+        WHERE id=%s
+    """, (name, phone, password, balance, uid))
 
     conn.commit()
     conn.close()
@@ -73,7 +69,7 @@ def api_update_user():
     return jsonify({"status": "ok"})
 
 
-# --- Удалить пользователя ---
+# --- Удалить ---
 @users_bp.post("/api/users/delete")
 def api_delete_user():
     data = request.get_json(force=True)
@@ -85,7 +81,6 @@ def api_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем все связанные записи
     cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
@@ -98,7 +93,7 @@ def api_delete_user():
 
 
 # ============================================================
-# 📌 Старые admin маршруты — НЕ ломают код
+# 📌 Старые admin маршруты
 # ============================================================
 
 @users_bp.get("/api/admin/users")
