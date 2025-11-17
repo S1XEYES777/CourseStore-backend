@@ -1,55 +1,58 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+import psycopg2.extras
 
 admin_bp = Blueprint("admin", __name__)
 
 
 # ============================================================
-# Получить ВСЕХ пользователей
+# 📌 Получить всех пользователей
 # ============================================================
 @admin_bp.get("/api/admin/users")
 def admin_get_users():
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, name, phone, balance FROM users ORDER BY id")
-    rows = cur.fetchall()
-    conn.close()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    users = [{
-        "id": row["id"],
-        "name": row["name"],
-        "phone": row["phone"],
-        "balance": row["balance"]
-    } for row in rows]
+    cur.execute("""
+        SELECT id, name, phone, balance, password
+        FROM users
+        ORDER BY id DESC
+    """)
+
+    users = cur.fetchall()
+    conn.close()
 
     return jsonify({"status": "ok", "users": users})
 
 
 # ============================================================
-# Обновить пользователя
+# 📌 Обновить пользователя
 # ============================================================
 @admin_bp.post("/api/admin/users/update")
 def admin_update_user():
     data = request.get_json(force=True)
+
     uid = data.get("id")
     name = (data.get("name") or "").strip()
     phone = (data.get("phone") or "").strip()
     password = (data.get("password") or "").strip()
-    balance = data.get("balance", 0)
+    balance = data.get("balance")
 
-    if not uid:
-        return jsonify({"status": "error", "message": "Нет user id"}), 400
+    if not uid or not name or not phone or not password:
+        return jsonify({"status": "error", "message": "Неверные данные"}), 400
+
+    try:
+        balance = int(balance)
+    except:
+        return jsonify({"status": "error", "message": "Баланс должен быть числом"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
         UPDATE users
-        SET name = %s,
-            phone = %s,
-            password = %s,
-            balance = %s
-        WHERE id = %s
+        SET name=%s, phone=%s, password=%s, balance=%s
+        WHERE id=%s
     """, (name, phone, password, balance, uid))
 
     conn.commit()
@@ -59,7 +62,7 @@ def admin_update_user():
 
 
 # ============================================================
-# Удалить пользователя
+# 📌 Удалить пользователя
 # ============================================================
 @admin_bp.post("/api/admin/users/delete")
 def admin_delete_user():
@@ -72,7 +75,13 @@ def admin_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM users WHERE id = %s", (uid,))
+    # Удаление зависимых данных
+    cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
+
+    # Удаляем пользователя
+    cur.execute("DELETE FROM users WHERE id=%s", (uid,))
 
     conn.commit()
     conn.close()
@@ -81,7 +90,7 @@ def admin_delete_user():
 
 
 # ============================================================
-# Удалить урок
+# 📌 Удалить урок
 # ============================================================
 @admin_bp.post("/api/admin/lesson/delete")
 def admin_delete_lesson():
@@ -94,7 +103,7 @@ def admin_delete_lesson():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM lessons WHERE id = %s", (lid,))
+    cur.execute("DELETE FROM lessons WHERE id=%s", (lid,))
 
     conn.commit()
     conn.close()
@@ -103,7 +112,7 @@ def admin_delete_lesson():
 
 
 # ============================================================
-# Удалить курс (+ уроки + покупки)
+# 📌 Удалить курс полностью
 # ============================================================
 @admin_bp.post("/api/admin/course/delete")
 def admin_delete_course():
@@ -116,14 +125,14 @@ def admin_delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем связанные записи
-    cur.execute("DELETE FROM lessons WHERE course_id = %s", (cid,))
-    cur.execute("DELETE FROM purchases WHERE course_id = %s", (cid,))
-    cur.execute("DELETE FROM cart_items WHERE course_id = %s", (cid,))
-    cur.execute("DELETE FROM reviews WHERE course_id = %s", (cid,))
+    # Удаление зависимостей
+    cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
 
-    # Удаляем сам курс
-    cur.execute("DELETE FROM courses WHERE id = %s", (cid,))
+    # Удаляем курс
+    cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
     conn.close()
