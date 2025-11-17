@@ -3,12 +3,11 @@ from db import get_connection
 
 users_bp = Blueprint("users", __name__)
 
+# ============================================================
+# 📌 ВНУТРЕННЯЯ ФУНКЦИЯ (чтобы не повторять код)
+# ============================================================
 
-# ====================================================================
-# GET /api/admin/users — Получить всех пользователей
-# ====================================================================
-@users_bp.get("/api/admin/users")
-def admin_get_users():
+def get_all_users():
     conn = get_connection()
     cur = conn.cursor()
 
@@ -21,46 +20,47 @@ def admin_get_users():
     rows = cur.fetchall()
     conn.close()
 
-    users = [{
+    return [{
         "id": r["id"],
         "name": r["name"],
         "phone": r["phone"],
-        "password": r["password"],  # Admin может видеть пароль
-        "balance": r["balance"],
+        "password": r["password"],
+        "balance": r["balance"]
     } for r in rows]
 
-    return jsonify({"status": "ok", "users": users})
+
+# ============================================================
+# 📌 API для Tkinter Admin Panel
+# ============================================================
+
+# --- Получить всех пользователей ---
+@users_bp.get("/api/users")
+def get_users_public():
+    return jsonify({"status": "ok", "users": get_all_users()})
 
 
-# ====================================================================
-# POST /api/admin/users/update — изменить пользователя
-# ====================================================================
-@users_bp.post("/api/admin/users/update")
-def admin_update_user():
+# --- Обновить пользователя ---
+@users_bp.post("/api/users/update")
+def update_user_public():
     data = request.get_json(force=True)
 
-    user_id = data.get("id")
+    uid = data.get("id")
     name = data.get("name", "").strip()
     phone = data.get("phone", "").strip()
     password = data.get("password", "").strip()
     balance = data.get("balance")
 
-    if not user_id or not name or not phone or not password:
+    if not uid or not name or not phone or not password:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
-
-    try:
-        balance = float(balance)
-    except:
-        return jsonify({"status": "error", "message": "Баланс должен быть числом"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
         UPDATE users
-        SET name = %s, phone = %s, password = %s, balance = %s
-        WHERE id = %s
-    """, (name, phone, password, balance, user_id))
+        SET name=%s, phone=%s, password=%s, balance=%s
+        WHERE id=%s
+    """, (name, phone, password, balance, uid))
 
     conn.commit()
     conn.close()
@@ -68,29 +68,43 @@ def admin_update_user():
     return jsonify({"status": "ok"})
 
 
-# ====================================================================
-# POST /api/admin/users/delete — удалить пользователя
-# ====================================================================
-@users_bp.post("/api/admin/users/delete")
-def admin_delete_user():
+# --- Удалить пользователя ---
+@users_bp.post("/api/users/delete")
+def delete_user_public():
     data = request.get_json(force=True)
-    user_id = data.get("id")
+    uid = data.get("id")
 
-    if not user_id:
+    if not uid:
         return jsonify({"status": "error", "message": "Нет id"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем данные из зависимых таблиц
-    cur.execute("DELETE FROM purchases WHERE user_id = %s", (user_id,))
-    cur.execute("DELETE FROM cart_items  WHERE user_id = %s", (user_id,))
-    cur.execute("DELETE FROM reviews     WHERE user_id = %s", (user_id,))
-
-    # Удаляем самого пользователя
-    cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM users WHERE id=%s", (uid,))
 
     conn.commit()
     conn.close()
 
     return jsonify({"status": "ok"})
+
+
+# ============================================================
+# 📌 Старые маршруты (чтобы ничего не ломалось)
+# ============================================================
+
+@users_bp.get("/api/admin/users")
+def admin_get_users():
+    return jsonify({"status": "ok", "users": get_all_users()})
+
+
+@users_bp.post("/api/admin/users/update")
+def admin_update_user():
+    return update_user_public()
+
+
+@users_bp.post("/api/admin/users/delete")
+def admin_delete_user():
+    return delete_user_public()
