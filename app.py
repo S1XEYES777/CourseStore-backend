@@ -39,4 +39,6 @@ from routes.cart import cart_bp
 # ============================
 #  Регистрация маршрутов
 # ============================
-app.regist
+app.register_blueprint(...)
+
+
