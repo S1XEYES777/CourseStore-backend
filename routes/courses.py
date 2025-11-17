@@ -231,3 +231,4 @@ def delete_course():
     conn.close()
 
     return jsonify({"status": "ok"})
+
