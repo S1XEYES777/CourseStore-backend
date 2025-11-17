@@ -1,15 +1,17 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+import psycopg2.extras
 
 users_bp = Blueprint("users", __name__)
 
+
 # ============================================================
-# 📌 ВНУТРЕННЯЯ ФУНКЦИЯ (чтобы не повторять код)
+# 📌 Получение всех пользователей (внутренняя функция)
 # ============================================================
 
 def get_all_users():
     conn = get_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
         SELECT id, name, phone, password, balance
@@ -20,28 +22,22 @@ def get_all_users():
     rows = cur.fetchall()
     conn.close()
 
-    return [{
-        "id": r["id"],
-        "name": r["name"],
-        "phone": r["phone"],
-        "password": r["password"],
-        "balance": r["balance"]
-    } for r in rows]
+    return rows  # уже dict list (RealDictCursor)
 
 
 # ============================================================
-# 📌 API для Tkinter Admin Panel
+# 📌 API для Tkinter (основные маршруты)
 # ============================================================
 
 # --- Получить всех пользователей ---
 @users_bp.get("/api/users")
-def get_users_public():
+def api_get_users():
     return jsonify({"status": "ok", "users": get_all_users()})
 
 
 # --- Обновить пользователя ---
 @users_bp.post("/api/users/update")
-def update_user_public():
+def api_update_user():
     data = request.get_json(force=True)
 
     uid = data.get("id")
@@ -53,14 +49,23 @@ def update_user_public():
     if not uid or not name or not phone or not password:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
+    try:
+        balance = int(balance)
+    except:
+        return jsonify({"status": "error", "message": "Баланс должен быть числом"}), 400
+
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
-        UPDATE users
-        SET name=%s, phone=%s, password=%s, balance=%s
-        WHERE id=%s
-    """, (name, phone, password, balance, uid))
+    try:
+        cur.execute("""
+            UPDATE users
+            SET name=%s, phone=%s, password=%s, balance=%s
+            WHERE id=%s
+        """, (name, phone, password, balance, uid))
+    except Exception as e:
+        conn.close()
+        return jsonify({"status": "error", "message": str(e)}), 400
 
     conn.commit()
     conn.close()
@@ -70,7 +75,7 @@ def update_user_public():
 
 # --- Удалить пользователя ---
 @users_bp.post("/api/users/delete")
-def delete_user_public():
+def api_delete_user():
     data = request.get_json(force=True)
     uid = data.get("id")
 
@@ -80,6 +85,7 @@ def delete_user_public():
     conn = get_connection()
     cur = conn.cursor()
 
+    # Удаляем все связанные записи
     cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
@@ -92,19 +98,19 @@ def delete_user_public():
 
 
 # ============================================================
-# 📌 Старые маршруты (чтобы ничего не ломалось)
+# 📌 Старые admin маршруты — НЕ ломают код
 # ============================================================
 
 @users_bp.get("/api/admin/users")
 def admin_get_users():
-    return jsonify({"status": "ok", "users": get_all_users()})
+    return api_get_users()
 
 
 @users_bp.post("/api/admin/users/update")
 def admin_update_user():
-    return update_user_public()
+    return api_update_user()
 
 
 @users_bp.post("/api/admin/users/delete")
 def admin_delete_user():
-    return delete_user_public()
+    return api_delete_user()
