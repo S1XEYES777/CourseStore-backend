@@ -1,19 +1,21 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+import psycopg2.extras
 
 lessons_bp = Blueprint("lessons", __name__)
 
 
 # =========================================================
-# GET /api/lessons — получить уроки курса
+# GET /api/lessons?course_id=ID — получить уроки курса
 # =========================================================
-@lessons_bp.get("/api/lessons/<int:course_id>")
-def get_lessons(course_id):
+@lessons_bp.get("/api/lessons")
+def get_lessons():
+    course_id = request.args.get("course_id", type=int)
     if not course_id:
         return jsonify({"status": "error", "message": "Нет course_id"}), 400
 
     conn = get_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
         SELECT id, title, youtube_url, position
@@ -25,22 +27,14 @@ def get_lessons(course_id):
     rows = cur.fetchall()
     conn.close()
 
-    lessons = [{
-        "id": r["id"],
-        "title": r["title"],
-        "youtube_url": r["youtube_url"],
-        "position": r["position"]
-    } for r in rows]
-
-    return jsonify({"status": "ok", "lessons": lessons})
+    return jsonify({"status": "ok", "lessons": rows})
 
 
 # =========================================================
-# NORMALIZE YOUTUBE LINKS
+# Нормализация ссылок YouTube
 # =========================================================
 def normalize_youtube_url(url: str) -> str:
     url = url.strip()
-
     if not url:
         return ""
 
@@ -53,7 +47,7 @@ def normalize_youtube_url(url: str) -> str:
         vid = url.split("watch?v=")[1].split("&")[0]
         return f"https://youtu.be/{vid}"
 
-    # Только ID (8–20 символов)
+    # Только ID
     if 8 <= len(url) <= 20 and " " not in url:
         return f"https://youtu.be/{url}"
 
@@ -67,9 +61,8 @@ def normalize_youtube_url(url: str) -> str:
 def add_lesson():
     data = request.get_json(force=True)
 
-    course_id = int(data.get("course_id", 0))
+    course_id = data.get("course_id")
     title = data.get("title", "").strip()
-
     raw_link = (
         data.get("youtube_url")
         or data.get("link")
@@ -83,11 +76,11 @@ def add_lesson():
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
     conn = get_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Находим следующую позицию
-    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM lessons WHERE course_id = %s", (course_id,))
-    pos = cur.fetchone()[0]
+    # Находим позицию
+    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s", (course_id,))
+    pos = cur.fetchone()["pos"]
 
     cur.execute("""
         INSERT INTO lessons (course_id, title, youtube_url, position)
@@ -117,7 +110,7 @@ def delete_lesson():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
+    cur.execute("DELETE FROM lessons WHERE id=%s", (lesson_id,))
     conn.commit()
     conn.close()
 
