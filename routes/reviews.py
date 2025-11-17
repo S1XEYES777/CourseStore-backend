@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from db import get_connection
+import psycopg2.extras
 
 reviews_bp = Blueprint("reviews", __name__)
 
@@ -14,7 +15,7 @@ def get_reviews():
         return jsonify({"status": "error", "message": "Нет course_id"}), 400
 
     conn = get_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
         SELECT r.id, r.rating, r.text, r.created_at, u.name AS user_name
@@ -27,15 +28,7 @@ def get_reviews():
     rows = cur.fetchall()
     conn.close()
 
-    reviews = [{
-        "id": r["id"],
-        "rating": r["rating"],
-        "text": r["text"],
-        "created_at": r["created_at"],
-        "user_name": r["user_name"]
-    } for r in rows]
-
-    return jsonify({"status": "ok", "reviews": reviews})
+    return jsonify({"status": "ok", "reviews": rows})
 
 
 # =========================================================
@@ -47,11 +40,18 @@ def add_review():
 
     user_id = data.get("user_id")
     course_id = data.get("course_id")
-    rating = int(data.get("rating", 0))
+    rating = data.get("rating")
     text = data.get("text", "").strip()
 
-    if not user_id or not course_id or not text or rating < 1 or rating > 5:
+    if not user_id or not course_id or not text:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
+
+    try:
+        rating = int(rating)
+        if rating < 1 or rating > 5:
+            raise ValueError
+    except:
+        return jsonify({"status": "error", "message": "Оценка должна быть 1–5"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
