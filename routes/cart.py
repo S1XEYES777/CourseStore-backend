@@ -1,7 +1,6 @@
-from flask import Blueprint, request, jsonify, url_for, current_app
+from flask import Blueprint, request, jsonify
 from db import get_connection
 import psycopg2.extras
-import os, base64
 
 cart_bp = Blueprint("cart", __name__)
 
@@ -22,28 +21,28 @@ def cart_add():
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     # Уже куплен?
-    cur.execute(
-        "SELECT id FROM purchases WHERE user_id=%s AND course_id=%s",
-        (user_id, course_id),
-    )
+    cur.execute("""
+        SELECT id FROM purchases
+        WHERE user_id=%s AND course_id=%s
+    """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
         return jsonify({"status": "error", "message": "Курс уже куплен"}), 400
 
     # Уже в корзине?
-    cur.execute(
-        "SELECT id FROM cart_items WHERE user_id=%s AND course_id=%s",
-        (user_id, course_id),
-    )
+    cur.execute("""
+        SELECT id FROM cart_items
+        WHERE user_id=%s AND course_id=%s
+    """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
         return jsonify({"status": "error", "message": "Курс уже в корзине"}), 400
 
     # Добавляем
-    cur.execute(
-        "INSERT INTO cart_items (user_id, course_id) VALUES (%s, %s)",
-        (user_id, course_id),
-    )
+    cur.execute("""
+        INSERT INTO cart_items (user_id, course_id)
+        VALUES (%s, %s)
+    """, (user_id, course_id))
 
     conn.commit()
     conn.close()
@@ -71,7 +70,7 @@ def cart_get():
             c.price,
             c.description,
             c.author,
-            c.image_path
+            c.image_url
         FROM cart_items ci
         JOIN courses c ON ci.course_id = c.id
         WHERE ci.user_id = %s
@@ -86,16 +85,6 @@ def cart_get():
     for r in rows:
         total += r["price"]
 
-        # image_url
-        if r["image_path"]:
-            image_url = url_for(
-                "static",
-                filename=f"images/{r['image_path']}",
-                _external=True,
-            )
-        else:
-            image_url = None
-
         items.append({
             "cart_id": r["cart_id"],
             "course_id": r["course_id"],
@@ -103,7 +92,7 @@ def cart_get():
             "price": r["price"],
             "author": r["author"],
             "description": r["description"],
-            "image_url": image_url
+            "image_url": r["image_url"]
         })
 
     return jsonify({
@@ -148,7 +137,7 @@ def cart_buy():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Берем корзину
+    # корзина
     cur.execute("""
         SELECT ci.course_id, c.price
         FROM cart_items ci
@@ -163,7 +152,7 @@ def cart_buy():
 
     total = sum(r["price"] for r in rows)
 
-    # Проверяем баланс
+    # баланс
     cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
     user = cur.fetchone()
 
@@ -175,18 +164,18 @@ def cart_buy():
         conn.close()
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
-    # Списываем
+    # списываем
     new_balance = user["balance"] - total
     cur.execute("UPDATE users SET balance=%s WHERE id=%s", (new_balance, user_id))
 
-    # Записываем покупки
+    # добавляем покупки
     for r in rows:
-        cur.execute(
-            "INSERT INTO purchases (user_id, course_id) VALUES (%s, %s)",
-            (user_id, r["course_id"]),
-        )
+        cur.execute("""
+            INSERT INTO purchases (user_id, course_id)
+            VALUES (%s, %s)
+        """, (user_id, r["course_id"]))
 
-    # Чистим корзину
+    # чистим корзину
     cur.execute("DELETE FROM cart_items WHERE user_id=%s", (user_id,))
 
     conn.commit()
