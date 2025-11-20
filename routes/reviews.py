@@ -25,10 +25,10 @@ def get_reviews():
         ORDER BY r.created_at DESC
     """, (course_id,))
 
-    rows = cur.fetchall()
+    reviews = cur.fetchall()
     conn.close()
 
-    return jsonify({"status": "ok", "reviews": rows})
+    return jsonify({"status": "ok", "reviews": reviews})
 
 
 # =========================================================
@@ -41,7 +41,7 @@ def add_review():
     user_id = data.get("user_id")
     course_id = data.get("course_id")
     rating = data.get("rating")
-    text = data.get("text", "").strip()
+    text = (data.get("text") or "").strip()
 
     if not user_id or not course_id or not text:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
