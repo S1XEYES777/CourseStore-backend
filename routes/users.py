@@ -6,9 +6,8 @@ users_bp = Blueprint("users", __name__)
 
 
 # ============================================================
-# 📌 Получение всех пользователей
+# 📌 Функция получения всех пользователей
 # ============================================================
-
 def get_all_users():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -19,31 +18,31 @@ def get_all_users():
         ORDER BY id DESC
     """)
 
-    rows = cur.fetchall()
+    users = cur.fetchall()
     conn.close()
 
-    return rows
+    return users
 
 
 # ============================================================
-# 📌 Tkinter API
+# 📌 API: Получить список пользователей
 # ============================================================
-
-# --- Получить всех ---
 @users_bp.get("/api/users")
 def api_get_users():
     return jsonify({"status": "ok", "users": get_all_users()})
 
 
-# --- Обновить ---
+# ============================================================
+# 📌 API: Обновить пользователя
+# ============================================================
 @users_bp.post("/api/users/update")
 def api_update_user():
     data = request.get_json(force=True)
 
     uid = data.get("id")
-    name = data.get("name", "").strip()
-    phone = data.get("phone", "").strip()
-    password = data.get("password", "").strip()
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
     balance = data.get("balance")
 
     if not uid or not name or not phone or not password:
@@ -69,7 +68,9 @@ def api_update_user():
     return jsonify({"status": "ok"})
 
 
-# --- Удалить ---
+# ============================================================
+# 📌 API: Удалить пользователя
+# ============================================================
 @users_bp.post("/api/users/delete")
 def api_delete_user():
     data = request.get_json(force=True)
@@ -81,6 +82,7 @@ def api_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
+    # удаление зависимостей ✔
     cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
@@ -93,9 +95,8 @@ def api_delete_user():
 
 
 # ============================================================
-# 📌 Старые admin маршруты
+# 📌 Поддержка старых маршрутов Admin
 # ============================================================
-
 @users_bp.get("/api/admin/users")
 def admin_get_users():
     return api_get_users()
