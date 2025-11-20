@@ -4,7 +4,6 @@ from db import get_connection
 
 courses_bp = Blueprint("courses", __name__)
 
-
 # =========================================================
 # GET /api/courses — список всех курсов
 # =========================================================
@@ -14,7 +13,7 @@ def get_courses():
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
-        SELECT id, title, price, author, description, image_url
+        SELECT id, title, price, author, description, image
         FROM courses
         ORDER BY id DESC
     """)
@@ -30,14 +29,14 @@ def get_courses():
             "price": r["price"],
             "author": r["author"],
             "description": r["description"],
-            "image_url": r["image_url"]
+            "image": r["image"]  # base64
         })
 
     return jsonify({"status": "ok", "courses": courses})
 
 
 # =========================================================
-# GET /api/course — 1 курс
+# GET /api/course — один курс
 # =========================================================
 @courses_bp.get("/api/course")
 def get_course():
@@ -49,7 +48,7 @@ def get_course():
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
-        SELECT id, title, price, author, description, image_url
+        SELECT id, title, price, author, description, image
         FROM courses
         WHERE id = %s
     """, (course_id,))
@@ -89,19 +88,21 @@ def add_course():
     author = data.get("author", "").strip()
     description = data.get("description", "").strip()
     price = int(data.get("price", 0))
-    image_url = data.get("image_url", "").strip()
 
-    if not title or not author or not description or not image_url or price <= 0:
+    # ВАЖНО: Tkinter отправляет base64 в поле "image"
+    image_b64 = data.get("image", "").strip()
+
+    if not title or not author or not description or not image_b64 or price <= 0:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
-        INSERT INTO courses (title, price, author, description, image_url)
+        INSERT INTO courses (title, price, author, description, image)
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id
-    """, (title, price, author, description, image_url))
+    """, (title, price, author, description, image_b64))
 
     cid = cur.fetchone()["id"]
     conn.commit()
@@ -122,17 +123,23 @@ def update_course():
     author = data.get("author", "").strip()
     description = data.get("description", "").strip()
     price = int(data.get("price", 0))
-    image_url = data.get("image_url", "").strip()
+
+    # Здесь image может быть либо base64, либо пустой
+    image_b64 = data.get("image", "").strip()
+
+    if not cid or not title or not author or not description or price <= 0:
+        return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
-    if image_url:
+    # Если пользователь выбрал новое изображение
+    if image_b64:
         cur.execute("""
             UPDATE courses
-            SET title=%s, price=%s, author=%s, description=%s, image_url=%s
+            SET title=%s, price=%s, author=%s, description=%s, image=%s
             WHERE id=%s
-        """, (title, price, author, description, image_url, cid))
+        """, (title, price, author, description, image_b64, cid))
     else:
         cur.execute("""
             UPDATE courses
