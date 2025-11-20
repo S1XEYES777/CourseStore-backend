@@ -16,7 +16,7 @@ from routes.courses import courses_bp
 from routes.lessons import lessons_bp
 from routes.reviews import reviews_bp
 from routes.cart import cart_bp
-from routes.admin import admin_bp
+# admin_bp — НЕ нужен, так как у тебя отдельное Tkinter приложение
 
 # ============================
 #  Создаём Flask-приложение
@@ -27,6 +27,7 @@ app = Flask(
     static_url_path="/static"
 )
 
+# Разрешаем запросы со всех доменов (фронтенд → бэкенд)
 CORS(app, supports_credentials=True)
 
 # ============================
@@ -38,7 +39,6 @@ app.register_blueprint(courses_bp)
 app.register_blueprint(lessons_bp)
 app.register_blueprint(reviews_bp)
 app.register_blueprint(cart_bp)
-app.register_blueprint(admin_bp)
 
 # ============================
 #  Проверка сервера
