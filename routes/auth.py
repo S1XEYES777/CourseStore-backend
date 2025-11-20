@@ -6,7 +6,7 @@ auth_bp = Blueprint("auth", __name__)
 
 
 # ============================================================
-# 📌 РЕГИСТРАЦИЯ
+# 📌 РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ
 # ============================================================
 @auth_bp.post("/api/register")
 def register():
@@ -22,13 +22,13 @@ def register():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Проверяем уникальность телефона
+    # Проверка телефона
     cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
     if cur.fetchone():
         conn.close()
         return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
 
-    # Создаем пользователя
+    # Создание пользователя
     cur.execute("""
         INSERT INTO users (name, phone, password, balance)
         VALUES (%s, %s, %s, 0)
@@ -36,7 +36,6 @@ def register():
     """, (name, phone, password))
 
     user = cur.fetchone()
-
     conn.commit()
     conn.close()
 
@@ -46,13 +45,13 @@ def register():
             "user_id": user["id"],
             "name": user["name"],
             "phone": user["phone"],
-            "balance": user["balance"],
+            "balance": user["balance"]
         }
     })
 
 
 # ============================================================
-# 📌 ВХОД
+# 📌 ВХОД ПОЛЬЗОВАТЕЛЯ
 # ============================================================
 @auth_bp.post("/api/login")
 def login():
@@ -67,7 +66,6 @@ def login():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Проверяем пользователя
     cur.execute("""
         SELECT id, name, phone, balance
         FROM users
@@ -86,6 +84,6 @@ def login():
             "user_id": user["id"],
             "name": user["name"],
             "phone": user["phone"],
-            "balance": user["balance"],
+            "balance": user["balance"]
         }
     })
