@@ -18,10 +18,9 @@ def admin_get_users():
         FROM users
         ORDER BY id DESC
     """)
-
     users = cur.fetchall()
-    conn.close()
 
+    conn.close()
     return jsonify({"status": "ok", "users": users})
 
 
@@ -75,12 +74,10 @@ def admin_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаление зависимых данных
+    # Удаляем зависимости
     cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
     cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
-
-    # Удаляем пользователя
     cur.execute("DELETE FROM users WHERE id=%s", (uid,))
 
     conn.commit()
@@ -104,7 +101,6 @@ def admin_delete_lesson():
     cur = conn.cursor()
 
     cur.execute("DELETE FROM lessons WHERE id=%s", (lid,))
-
     conn.commit()
     conn.close()
 
@@ -125,13 +121,11 @@ def admin_delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаление зависимостей
+    # Удаляем всё, связанное с курсом
     cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
-
-    # Удаляем курс
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
