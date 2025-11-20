@@ -24,10 +24,10 @@ def get_lessons():
         ORDER BY position ASC
     """, (course_id,))
 
-    rows = cur.fetchall()
+    lessons = cur.fetchall()
     conn.close()
 
-    return jsonify({"status": "ok", "lessons": rows})
+    return jsonify({"status": "ok", "lessons": lessons})
 
 
 # =========================================================
@@ -38,16 +38,13 @@ def normalize_youtube_url(url: str) -> str:
     if not url:
         return ""
 
-    # https://youtu.be/ID
     if "youtu.be/" in url:
         return "https://youtu.be/" + url.split("youtu.be/")[1].split("?")[0]
 
-    # https://youtube.com/watch?v=ID
     if "watch?v=" in url:
         vid = url.split("watch?v=")[1].split("&")[0]
         return f"https://youtu.be/{vid}"
 
-    # Только ID
     if 8 <= len(url) <= 20 and " " not in url:
         return f"https://youtu.be/{url}"
 
@@ -62,7 +59,7 @@ def add_lesson():
     data = request.get_json(force=True)
 
     course_id = data.get("course_id")
-    title = data.get("title", "").strip()
+    title = (data.get("title") or "").strip()
     raw_link = (
         data.get("youtube_url")
         or data.get("link")
@@ -78,8 +75,8 @@ def add_lesson():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Находим позицию
-    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s", (course_id,))
+    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s",
+                (course_id,))
     pos = cur.fetchone()["pos"]
 
     cur.execute("""
