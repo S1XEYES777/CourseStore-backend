@@ -149,7 +149,7 @@ def delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    # правильные таблицы 👇
+    # правильные таблицы
     cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
@@ -159,4 +159,4 @@ def delete_course():
     conn.commit()
     conn.close()
 
-    return jsonify({"status": "ok"})
+    return jsonify({"status": 'ok'})
