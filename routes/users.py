@@ -1,27 +1,51 @@
 from flask import Blueprint, request, jsonify
-from db import get_connection
-import psycopg2.extras
+import os
+import json
 
 users_bp = Blueprint("users", __name__)
 
+# ============================================================
+# JSON FILES
+# ============================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
+
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+CART_FILE = os.path.join(DATA_DIR, "cart.json")
+REVIEWS_FILE = os.path.join(DATA_DIR, "reviews.json")
+PURCHASES_FILE = os.path.join(DATA_DIR, "purchases.json")
+
 
 # ============================================================
-# 📌 Получить всех пользователей
+# HELPERS
+# ============================================================
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def next_id(items):
+    if not items:
+        return 1
+    return max(int(i.get("id", 0)) for i in items) + 1
+
+
+# ============================================================
+# 📌 INTERNAL: получить всех пользователей
 # ============================================================
 def get_all_users():
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("""
-        SELECT id, name, phone, password, balance
-        FROM users
-        ORDER BY id DESC
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-
-    return rows
+    users = load_json(USERS_FILE)
+    return users
 
 
 # ============================================================
@@ -53,18 +77,22 @@ def api_update_user():
     except:
         return jsonify({"status": "error", "message": "Баланс должен быть числом"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor()
+    users = load_json(USERS_FILE)
+    updated = False
 
-    cur.execute("""
-        UPDATE users
-        SET name=%s, phone=%s, password=%s, balance=%s
-        WHERE id=%s
-    """, (name, phone, password, balance, uid))
+    for u in users:
+        if int(u.get("id", 0)) == int(uid):
+            u["name"] = name
+            u["phone"] = phone
+            u["password"] = password
+            u["balance"] = balance
+            updated = True
+            break
 
-    conn.commit()
-    conn.close()
+    if not updated:
+        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
+    save_json(USERS_FILE, users)
     return jsonify({"status": "ok"})
 
 
@@ -79,22 +107,35 @@ def api_delete_user():
     if not uid:
         return jsonify({"status": "error", "message": "Нет id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor()
+    uid = int(uid)
 
-    cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
-    cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
-    cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
-    cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+    users = load_json(USERS_FILE)
+    cart = load_json(CART_FILE)
+    reviews = load_json(REVIEWS_FILE)
+    purchases = load_json(PURCHASES_FILE)
 
-    conn.commit()
-    conn.close()
+    # Удаляем пользователя
+    users = [u for u in users if int(u.get("id", 0)) != uid]
+
+    # Удаляем корзину
+    cart = [c for c in cart if int(c.get("user_id", 0)) != uid]
+
+    # Удаляем отзывы
+    reviews = [r for r in reviews if int(r.get("user_id", 0)) != uid]
+
+    # Удаляем покупки (если есть)
+    purchases = [p for p in purchases if int(p.get("user_id", 0)) != uid]
+
+    save_json(USERS_FILE, users)
+    save_json(CART_FILE, cart)
+    save_json(REVIEWS_FILE, reviews)
+    save_json(PURCHASES_FILE, purchases)
 
     return jsonify({"status": "ok"})
 
 
 # ============================================================
-# 📌 Поддержка старых admin-маршрутов (для Tkinter)
+# 📌 Старые admin-маршруты (для Tkinter Admin Panel)
 # ============================================================
 @users_bp.get("/api/admin/users")
 def admin_get_users():
