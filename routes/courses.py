@@ -2,12 +2,13 @@ from flask import Blueprint, request, jsonify
 import psycopg2.extras
 from db import get_connection
 
-courses_bp = Blueprint("courses", __name__)
+courses_bp = Blueprint("courses", __name__, url_prefix="/api/courses")
+
 
 # =========================================================
-# GET /api/courses — список всех курсов
+# 📌 GET /api/courses — список всех курсов
 # =========================================================
-@courses_bp.get("/api/courses")
+@courses_bp.get("")
 def get_courses():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -21,24 +22,13 @@ def get_courses():
     rows = cur.fetchall()
     conn.close()
 
-    courses = []
-    for r in rows:
-        courses.append({
-            "id": r["id"],
-            "title": r["title"],
-            "price": r["price"],
-            "author": r["author"],
-            "description": r["description"],
-            "image": r["image"]  # base64
-        })
-
-    return jsonify({"status": "ok", "courses": courses})
+    return jsonify({"status": "ok", "courses": rows})
 
 
 # =========================================================
-# GET /api/course — один курс
+# 📌 GET /api/courses/one — один курс
 # =========================================================
-@courses_bp.get("/api/course")
+@courses_bp.get("/one")
 def get_course():
     course_id = request.args.get("course_id", type=int)
     if not course_id:
@@ -78,9 +68,9 @@ def get_course():
 
 
 # =========================================================
-# POST /api/courses/add — Добавить курс
+# 📌 POST /api/courses/add — Добавить курс
 # =========================================================
-@courses_bp.post("/api/courses/add")
+@courses_bp.post("/add")
 def add_course():
     data = request.get_json(force=True)
 
@@ -88,8 +78,6 @@ def add_course():
     author = data.get("author", "").strip()
     description = data.get("description", "").strip()
     price = int(data.get("price", 0))
-
-    # ВАЖНО: Tkinter отправляет base64 в поле "image"
     image_b64 = data.get("image", "").strip()
 
     if not title or not author or not description or not image_b64 or price <= 0:
@@ -112,9 +100,9 @@ def add_course():
 
 
 # =========================================================
-# POST /api/courses/update — Изменить курс
+# 📌 POST /api/courses/update — Изменить курс
 # =========================================================
-@courses_bp.post("/api/courses/update")
+@courses_bp.post("/update")
 def update_course():
     data = request.get_json(force=True)
 
@@ -123,8 +111,6 @@ def update_course():
     author = data.get("author", "").strip()
     description = data.get("description", "").strip()
     price = int(data.get("price", 0))
-
-    # Здесь image может быть либо base64, либо пустой
     image_b64 = data.get("image", "").strip()
 
     if not cid or not title or not author or not description or price <= 0:
@@ -133,7 +119,6 @@ def update_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Если пользователь выбрал новое изображение
     if image_b64:
         cur.execute("""
             UPDATE courses
@@ -154,20 +139,22 @@ def update_course():
 
 
 # =========================================================
-# POST /api/courses/delete — Удалить курс
+# 📌 POST /api/courses/delete — Удалить курс
 # =========================================================
-@courses_bp.post("/api/courses/delete")
+@courses_bp.post("/delete")
 def delete_course():
     data = request.get_json(force=True)
     cid = data.get("id")
+
+    if not cid:
+        return jsonify({"status": "error", "message": "Нет id"}), 400
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
-    cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
-    cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM cart WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
