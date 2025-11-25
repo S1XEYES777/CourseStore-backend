@@ -7,11 +7,9 @@ DATABASE_URL = os.getenv(
     "postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore?sslmode=require"
 )
 
+
 def get_connection():
-    """
-    Правильное подключение PostgreSQL с DictCursor
-    чтобы row["id"] и row["title"] работали везде.
-    """
+    """Подключение PostgreSQL с RealDictCursor"""
     return psycopg2.connect(
         DATABASE_URL,
         sslmode="require",
@@ -20,7 +18,7 @@ def get_connection():
 
 
 def init_db():
-    """Создание таблиц"""
+    """Создание всех таблиц"""
     conn = get_connection()
     cur = conn.cursor()
 
@@ -35,7 +33,7 @@ def init_db():
         );
     """)
 
-    # COURSES
+    # COURSES  ← image TEXT (Base64)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             id SERIAL PRIMARY KEY,
@@ -43,7 +41,7 @@ def init_db():
             price INTEGER NOT NULL,
             author TEXT NOT NULL,
             description TEXT NOT NULL,
-            image_path TEXT
+            image TEXT   -- base64
         );
     """)
 
@@ -76,21 +74,19 @@ def init_db():
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             course_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
         );
     """)
 
-    # REVIEWS
+    # REVIEWS  ← stars INTEGER
     cur.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             course_id INTEGER NOT NULL,
-            rating INTEGER NOT NULL,
+            stars INTEGER NOT NULL,
             text TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
         );
