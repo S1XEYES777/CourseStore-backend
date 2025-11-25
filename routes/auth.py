@@ -22,13 +22,13 @@ def register():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # Проверка телефона
+    # Проверяем существование телефона
     cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
     if cur.fetchone():
         conn.close()
         return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
 
-    # Создание пользователя
+    # Создаём пользователя
     cur.execute("""
         INSERT INTO users (name, phone, password, balance)
         VALUES (%s, %s, %s, 0)
