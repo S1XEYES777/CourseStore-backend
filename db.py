@@ -33,7 +33,7 @@ def init_db():
         );
     """)
 
-    # COURSES  ← image TEXT (Base64)
+    # COURSES — ВАЖНО: image TEXT (base64)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             id SERIAL PRIMARY KEY,
@@ -41,7 +41,7 @@ def init_db():
             price INTEGER NOT NULL,
             author TEXT NOT NULL,
             description TEXT NOT NULL,
-            image TEXT   -- base64
+            image TEXT
         );
     """)
 
@@ -74,12 +74,13 @@ def init_db():
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             course_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
         );
     """)
 
-    # REVIEWS  ← stars INTEGER
+    # REVIEWS — stars INTEGER
     cur.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
             id SERIAL PRIMARY KEY,
@@ -87,6 +88,7 @@ def init_db():
             course_id INTEGER NOT NULL,
             stars INTEGER NOT NULL,
             text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
         );
