@@ -1,8 +1,49 @@
 from flask import Blueprint, request, jsonify
-from db import get_connection
-import psycopg2.extras
+import os
+import json
 
 reviews_bp = Blueprint("reviews", __name__, url_prefix="/api/reviews")
+
+# ==========================
+# JSON PATHS
+# ==========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
+
+REVIEWS_FILE = os.path.join(DATA_DIR, "reviews.json")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+
+
+# ==========================
+# HELPERS
+# ==========================
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def next_id(items):
+    if not items:
+        return 1
+    return max(int(x.get("id", 0)) for x in items) + 1
+
+
+def get_user_name(user_id):
+    users = load_json(USERS_FILE)
+    for u in users:
+        if int(u.get("id", 0)) == int(user_id):
+            return u.get("name", "Unknown")
+    return "Unknown"
 
 
 # =========================================================
@@ -14,21 +55,15 @@ def get_reviews():
     if not course_id:
         return jsonify({"status": "error", "message": "Нет course_id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    reviews = load_json(REVIEWS_FILE)
+    lesson_reviews = [
+        r for r in reviews if int(r.get("course_id", 0)) == course_id
+    ]
 
-    cur.execute("""
-        SELECT r.id, r.stars, r.text, u.name AS user_name
-        FROM reviews r
-        JOIN users u ON r.user_id = u.id
-        WHERE r.course_id = %s
-        ORDER BY r.id DESC
-    """, (course_id,))
+    for r in lesson_reviews:
+        r["user_name"] = get_user_name(r.get("user_id"))
 
-    rows = cur.fetchall()
-    conn.close()
-
-    return jsonify({"status": "ok", "reviews": rows})
+    return jsonify({"status": "ok", "reviews": lesson_reviews})
 
 
 # =========================================================
@@ -48,20 +83,23 @@ def add_review():
 
     try:
         stars = int(stars)
-        if stars < 1 or stars > 5:
+        if not (1 <= stars <= 5):
             raise ValueError
     except:
         return jsonify({"status": "error", "message": "Оценка должна быть от 1 до 5"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor()
+    reviews = load_json(REVIEWS_FILE)
+    rid = next_id(reviews)
 
-    cur.execute("""
-        INSERT INTO reviews (user_id, course_id, stars, text)
-        VALUES (%s, %s, %s, %s)
-    """, (user_id, course_id, stars, text))
+    new_review = {
+        "id": rid,
+        "user_id": int(user_id),
+        "course_id": int(course_id),
+        "stars": stars,
+        "text": text,
+    }
 
-    conn.commit()
-    conn.close()
+    reviews.append(new_review)
+    save_json(REVIEWS_FILE, reviews)
 
     return jsonify({"status": "ok"})
