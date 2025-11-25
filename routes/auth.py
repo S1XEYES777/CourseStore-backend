@@ -1,12 +1,44 @@
 from flask import Blueprint, request, jsonify
-from db import get_connection
-import psycopg2.extras
+import os
+import json
 
 auth_bp = Blueprint("auth", __name__)
 
+# ==========================
+#  JSON ФАЙЛДАР
+# ==========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
+
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+
+
+# ==========================
+#  ВСПОМОГАТЕЛЬНЫЕ
+# ==========================
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def next_id(items):
+    if not items:
+        return 1
+    return max(int(x.get("id", 0)) for x in items) + 1
+
 
 # ============================================================
-# 📌 РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ
+# 📌 РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ (JSON)
 # ============================================================
 @auth_bp.post("/api/register")
 def register():
@@ -19,30 +51,29 @@ def register():
     if not name or not phone or not password:
         return jsonify({"status": "error", "message": "Заполните все поля"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    users = load_json(USERS_FILE)
 
-    # Проверяем существование телефона
-    cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
-    if cur.fetchone():
-        conn.close()
-        return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
+    # Проверяем телефон
+    for u in users:
+        if u.get("phone") == phone:
+            return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
 
-    # Создаём пользователя
-    cur.execute("""
-        INSERT INTO users (name, phone, password, balance)
-        VALUES (%s, %s, %s, 0)
-        RETURNING id, name, phone, balance
-    """, (name, phone, password))
+    uid = next_id(users)
+    user = {
+        "id": uid,
+        "name": name,
+        "phone": phone,
+        "password": password,
+        "balance": 0
+    }
 
-    user = cur.fetchone()
-    conn.commit()
-    conn.close()
+    users.append(user)
+    save_json(USERS_FILE, users)
 
     return jsonify({
         "status": "ok",
         "user": {
-            "user_id": user["id"],
+            "id": user["id"],
             "name": user["name"],
             "phone": user["phone"],
             "balance": user["balance"]
@@ -51,7 +82,7 @@ def register():
 
 
 # ============================================================
-# 📌 ВХОД ПОЛЬЗОВАТЕЛЯ
+# 📌 ВХОД ПОЛЬЗОВАТЕЛЯ (JSON)
 # ============================================================
 @auth_bp.post("/api/login")
 def login():
@@ -63,27 +94,18 @@ def login():
     if not phone or not password:
         return jsonify({"status": "error", "message": "Заполните телефон и пароль"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    users = load_json(USERS_FILE)
 
-    cur.execute("""
-        SELECT id, name, phone, balance
-        FROM users
-        WHERE phone=%s AND password=%s
-    """, (phone, password))
+    for u in users:
+        if u.get("phone") == phone and u.get("password") == password:
+            return jsonify({
+                "status": "ok",
+                "user": {
+                    "id": u["id"],
+                    "name": u["name"],
+                    "phone": u["phone"],
+                    "balance": u.get("balance", 0)
+                }
+            })
 
-    user = cur.fetchone()
-    conn.close()
-
-    if not user:
-        return jsonify({"status": "error", "message": "Неверный телефон или пароль"}), 400
-
-    return jsonify({
-        "status": "ok",
-        "user": {
-            "user_id": user["id"],
-            "name": user["name"],
-            "phone": user["phone"],
-            "balance": user["balance"]
-        }
-    })
+    return jsonify({"status": "error", "message": "Неверный телефон или пароль"}), 400
