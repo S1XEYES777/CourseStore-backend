@@ -5,9 +5,9 @@ from db import get_connection
 courses_bp = Blueprint("courses", __name__, url_prefix="/api/courses")
 
 
-# =========================================================
-# 📌 GET /api/courses — список всех курсов
-# =========================================================
+# ================================
+# GET /api/courses — список курсов
+# ================================
 @courses_bp.get("")
 def get_courses():
     conn = get_connection()
@@ -25,9 +25,9 @@ def get_courses():
     return jsonify({"status": "ok", "courses": rows})
 
 
-# =========================================================
-# 📌 GET /api/courses/one — один курс
-# =========================================================
+# ================================
+# GET /api/courses/one — один курс
+# ================================
 @courses_bp.get("/one")
 def get_course():
     course_id = request.args.get("course_id", type=int)
@@ -60,16 +60,13 @@ def get_course():
 
     return jsonify({
         "status": "ok",
-        "course": {
-            **course,
-            "lessons": lessons
-        }
+        "course": {**course, "lessons": lessons}
     })
 
 
-# =========================================================
-# 📌 POST /api/courses/add — Добавить курс
-# =========================================================
+# ================================
+# POST /api/courses/add — создать
+# ================================
 @courses_bp.post("/add")
 def add_course():
     data = request.get_json(force=True)
@@ -99,9 +96,9 @@ def add_course():
     return jsonify({"status": "ok", "course_id": cid})
 
 
-# =========================================================
-# 📌 POST /api/courses/update — Изменить курс
-# =========================================================
+# ================================
+# POST /api/courses/update — update
+# ================================
 @courses_bp.post("/update")
 def update_course():
     data = request.get_json(force=True)
@@ -138,9 +135,9 @@ def update_course():
     return jsonify({"status": "ok"})
 
 
-# =========================================================
-# 📌 POST /api/courses/delete — Удалить курс
-# =========================================================
+# ================================
+# POST /api/courses/delete
+# ================================
 @courses_bp.post("/delete")
 def delete_course():
     data = request.get_json(force=True)
@@ -152,9 +149,11 @@ def delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
+    # правильные таблицы 👇
     cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
-    cur.execute("DELETE FROM cart WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
