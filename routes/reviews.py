@@ -65,4 +65,3 @@ def add_review():
     conn.close()
 
     return jsonify({"status": "ok"})
-
