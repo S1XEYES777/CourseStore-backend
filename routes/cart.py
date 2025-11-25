@@ -1,12 +1,62 @@
 from flask import Blueprint, request, jsonify
-from db import get_connection
-import psycopg2.extras
+import os
+import json
 
 cart_bp = Blueprint("cart", __name__, url_prefix="/api/cart")
 
+# ==========================
+#  JSON ФАЙЛДАР
+# ==========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
+
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+COURSES_FILE = os.path.join(DATA_DIR, "courses.json")
+CART_FILE = os.path.join(DATA_DIR, "cart.json")
+
+
+# ==========================
+#  ВСПОМОГАТЕЛЬНЫЕ
+# ==========================
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def next_id(items):
+    if not items:
+        return 1
+    return max(int(x.get("id", 0)) for x in items) + 1
+
+
+def get_course(course_id):
+    courses = load_json(COURSES_FILE)
+    for c in courses:
+        if int(c.get("id")) == int(course_id):
+            return c
+    return None
+
+
+def get_user(user_id):
+    users = load_json(USERS_FILE)
+    for u in users:
+        if int(u.get("id")) == int(user_id):
+            return u
+    return None
+
 
 # ============================================================
-# 📌 Добавить курс в корзину
+# 📌 Добавить курс в корзину (JSON)
 # ============================================================
 @cart_bp.post("/add")
 def cart_add():
@@ -17,27 +67,27 @@ def cart_add():
     if not user_id or not course_id:
         return jsonify({"status": "error", "message": "Нет user_id или course_id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    # Проверка существования курса
+    course = get_course(course_id)
+    if not course:
+        return jsonify({"status": "error", "message": "Курс не найден"}), 404
 
-    # Уже куплен?
-    cur.execute("""
-        SELECT id FROM cart WHERE user_id=%s AND course_id=%s
-    """, (user_id, course_id))
-    if cur.fetchone():
-        conn.close()
-        return jsonify({"status": "error", "message": "Курс уже в корзине"}), 400
+    cart = load_json(CART_FILE)
 
-    # Добавляем
-    cur.execute("""
-        INSERT INTO cart (user_id, course_id)
-        VALUES (%s, %s)
-    """, (user_id, course_id))
+    # Проверка на дубли
+    for item in cart:
+        if int(item["user_id"]) == int(user_id) and int(item["course_id"]) == int(course_id):
+            return jsonify({"status": "error", "message": "Курс уже в корзине"}), 400
 
-    conn.commit()
-    conn.close()
+    cid = next_id(cart)
+    cart.append({
+        "id": cid,
+        "user_id": int(user_id),
+        "course_id": int(course_id)
+    })
 
-    return jsonify({"status": "ok"})
+    save_json(CART_FILE, cart)
+    return jsonify({"status": "ok", "cart_id": cid})
 
 
 # ============================================================
@@ -49,50 +99,32 @@ def cart_get():
     if not user_id:
         return jsonify({"status": "error", "message": "Нет user_id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("""
-        SELECT
-            c.id AS cart_id,
-            courses.id AS course_id,
-            courses.title,
-            courses.price,
-            courses.description,
-            courses.author,
-            courses.image
-        FROM cart c
-        JOIN courses ON c.course_id = courses.id
-        WHERE c.user_id = %s
-    """, (user_id,))
-
-    rows = cur.fetchall()
-    conn.close()
+    cart = load_json(CART_FILE)
+    courses = load_json(COURSES_FILE)
 
     items = []
     total = 0
 
-    for r in rows:
-        total += r["price"]
-        items.append({
-            "cart_id": r["cart_id"],
-            "course_id": r["course_id"],
-            "title": r["title"],
-            "price": r["price"],
-            "author": r["author"],
-            "description": r["description"],
-            "image": r["image"]
-        })
+    for item in cart:
+        if int(item["user_id"]) == int(user_id):
+            course = get_course(item["course_id"])
+            if course:
+                total += int(course.get("price", 0))
+                items.append({
+                    "cart_id": item["id"],
+                    "course_id": course["id"],
+                    "title": course["title"],
+                    "price": course["price"],
+                    "author": course["author"],
+                    "description": course["description"],
+                    "image": course.get("image"),
+                })
 
-    return jsonify({
-        "status": "ok",
-        "items": items,
-        "total": total
-    })
+    return jsonify({"status": "ok", "items": items, "total": total})
 
 
 # ============================================================
-# 📌 Удалить один товар из корзины
+# 📌 Удалить 1 элемент из корзины
 # ============================================================
 @cart_bp.post("/remove")
 def cart_remove():
@@ -102,18 +134,15 @@ def cart_remove():
     if not cart_id:
         return jsonify({"status": "error", "message": "Нет cart_id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor()
+    cart = load_json(CART_FILE)
+    cart = [i for i in cart if int(i["id"]) != int(cart_id)]
 
-    cur.execute("DELETE FROM cart WHERE id=%s", (cart_id,))
-    conn.commit()
-    conn.close()
-
+    save_json(CART_FILE, cart)
     return jsonify({"status": "ok"})
 
 
 # ============================================================
-# 📌 Купить всё из корзины
+# 📌 Купить всё (JSON версия)
 # ============================================================
 @cart_bp.post("/buy")
 def cart_buy():
@@ -123,51 +152,42 @@ def cart_buy():
     if not user_id:
         return jsonify({"status": "error", "message": "Нет user_id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    # Получаем корзину
-    cur.execute("""
-        SELECT c.course_id, courses.price
-        FROM cart c
-        JOIN courses ON c.course_id = courses.id
-        WHERE c.user_id = %s
-    """, (user_id,))
-    rows = cur.fetchall()
-
-    if not rows:
-        conn.close()
-        return jsonify({"status": "error", "message": "Корзина пуста"}), 400
-
-    total = sum(r["price"] for r in rows)
-
-    # Проверяем баланс
-    cur.execute("SELECT balance FROM users WHERE id=%s", (user_id,))
-    user = cur.fetchone()
-
+    user = get_user(user_id)
     if not user:
-        conn.close()
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
-    if user["balance"] < total:
-        conn.close()
+    cart = load_json(CART_FILE)
+    courses = load_json(COURSES_FILE)
+
+    # Получаем товары пользователя
+    user_cart = [i for i in cart if int(i["user_id"]) == int(user_id)]
+
+    if not user_cart:
+        return jsonify({"status": "error", "message": "Корзина пуста"}), 400
+
+    total = 0
+    for item in user_cart:
+        course = get_course(item["course_id"])
+        if course:
+            total += int(course.get("price", 0))
+
+    # Проверка баланса
+    balance = int(user.get("balance", 0))
+    if balance < total:
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
     # Списываем деньги
-    new_balance = user["balance"] - total
-    cur.execute("UPDATE users SET balance=%s WHERE id=%s", (new_balance, user_id))
+    user["balance"] = balance - total
 
-    # Добавляем покупки
-    for r in rows:
-        cur.execute("""
-            INSERT INTO reviews (course_id, user_id, text, stars)
-            VALUES (%s, %s, '', 0)
-        """, (r["course_id"], user_id))
+    # Обновляем пользователей
+    users = load_json(USERS_FILE)
+    for u in users:
+        if int(u["id"]) == int(user_id):
+            u["balance"] = user["balance"]
+    save_json(USERS_FILE, users)
 
     # Очищаем корзину
-    cur.execute("DELETE FROM cart WHERE user_id=%s", (user_id,))
+    new_cart = [i for i in cart if int(i["user_id"]) != int(user_id)]
+    save_json(CART_FILE, new_cart)
 
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok", "new_balance": new_balance})
+    return jsonify({"status": "ok", "new_balance": user["balance"]})
