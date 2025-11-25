@@ -74,10 +74,11 @@ def admin_delete_user():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем зависимости
-    cur.execute("DELETE FROM purchases WHERE user_id=%s", (uid,))
-    cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
+    # удаляем связанные данные
     cur.execute("DELETE FROM reviews WHERE user_id=%s", (uid,))
+    cur.execute("DELETE FROM cart WHERE user_id=%s", (uid,))
+
+    # удаляем юзера
     cur.execute("DELETE FROM users WHERE id=%s", (uid,))
 
     conn.commit()
@@ -121,11 +122,12 @@ def admin_delete_course():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем всё, связанное с курсом
+    # удаляем связанные данные
     cur.execute("DELETE FROM lessons WHERE course_id=%s", (cid,))
-    cur.execute("DELETE FROM purchases WHERE course_id=%s", (cid,))
-    cur.execute("DELETE FROM cart_items WHERE course_id=%s", (cid,))
     cur.execute("DELETE FROM reviews WHERE course_id=%s", (cid,))
+    cur.execute("DELETE FROM cart WHERE course_id=%s", (cid,))
+
+    # удаляем курс
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
 
     conn.commit()
