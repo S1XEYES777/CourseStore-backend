@@ -1,33 +1,41 @@
 from flask import Blueprint, request, jsonify
-from db import get_connection
-import psycopg2.extras
+import os
+import json
 
 lessons_bp = Blueprint("lessons", __name__, url_prefix="/api/lessons")
 
 
-# =========================================================
-# 📌 GET /api/lessons?course_id=ID — получить уроки курса
-# =========================================================
-@lessons_bp.get("")
-def get_lessons():
-    course_id = request.args.get("course_id", type=int)
-    if not course_id:
-        return jsonify({"status": "error", "message": "Нет course_id"}), 400
+# ==========================
+# JSON PATHS
+# ==========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "data")
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+LESSONS_FILE = os.path.join(DATA_DIR, "lessons.json")
 
-    cur.execute("""
-        SELECT id, title, youtube_url, position
-        FROM lessons
-        WHERE course_id = %s
-        ORDER BY position ASC
-    """, (course_id,))
 
-    lessons = cur.fetchall()
-    conn.close()
+# ==========================
+# HELPERS
+# ==========================
+def load_json(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
 
-    return jsonify({"status": "ok", "lessons": lessons})
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def next_id(items):
+    if not items:
+        return 1
+    return max(int(x.get("id", 0)) for x in items) + 1
 
 
 # =========================================================
@@ -52,6 +60,25 @@ def normalize_youtube_url(url: str) -> str:
 
 
 # =========================================================
+# 📌 GET /api/lessons?course_id=ID — получить уроки курса
+# =========================================================
+@lessons_bp.get("")
+def get_lessons():
+    course_id = request.args.get("course_id", type=int)
+    if not course_id:
+        return jsonify({"status": "error", "message": "Нет course_id"}), 400
+
+    lessons = load_json(LESSONS_FILE)
+
+    course_lessons = [
+        l for l in lessons if int(l.get("course_id", 0)) == course_id
+    ]
+    course_lessons.sort(key=lambda x: int(x.get("position", 0)))
+
+    return jsonify({"status": "ok", "lessons": course_lessons})
+
+
+# =========================================================
 # 📌 POST /api/lessons/add — добавить урок
 # =========================================================
 @lessons_bp.post("/add")
@@ -72,25 +99,27 @@ def add_lesson():
     if not course_id or not title or not youtube_url:
         return jsonify({"status": "error", "message": "Неверные данные"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    lessons = load_json(LESSONS_FILE)
 
-    cur.execute(
-        "SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s",
-        (course_id,)
-    )
-    pos = cur.fetchone()["pos"]
+    # position — это max(position) + 1
+    if lessons:
+        pos = max([int(l.get("position", 0)) for l in lessons 
+                   if int(l.get("course_id", 0)) == int(course_id)] + [0]) + 1
+    else:
+        pos = 1
 
-    cur.execute("""
-        INSERT INTO lessons (course_id, title, youtube_url, position)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id
-    """, (course_id, title, youtube_url, pos))
+    lesson_id = next_id(lessons)
 
-    lesson_id = cur.fetchone()["id"]
+    new_lesson = {
+        "id": lesson_id,
+        "course_id": int(course_id),
+        "title": title,
+        "youtube_url": youtube_url,
+        "position": pos
+    }
 
-    conn.commit()
-    conn.close()
+    lessons.append(new_lesson)
+    save_json(LESSONS_FILE, lessons)
 
     return jsonify({"status": "ok", "lesson_id": lesson_id})
 
@@ -106,11 +135,8 @@ def delete_lesson():
     if not lesson_id:
         return jsonify({"status": "error", "message": "Нет id"}), 400
 
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("DELETE FROM lessons WHERE id=%s", (lesson_id,))
-    conn.commit()
-    conn.close()
+    lessons = load_json(LESSONS_FILE)
+    lessons = [l for l in lessons if int(l.get("id", 0)) != int(lesson_id)]
+    save_json(LESSONS_FILE, lessons)
 
     return jsonify({"status": "ok"})
