@@ -1,103 +1,65 @@
 import os
-import psycopg2
-import psycopg2.extras
+import json
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore?sslmode=require"
-)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ============================
+#  ПУТИ К JSON-ФАЙЛАМ
+# ============================
+FILES = {
+    "users":      os.path.join(DATA_DIR, "users.json"),
+    "courses":    os.path.join(DATA_DIR, "courses.json"),
+    "lessons":    os.path.join(DATA_DIR, "lessons.json"),
+    "reviews":    os.path.join(DATA_DIR, "reviews.json"),
+    "cart":       os.path.join(DATA_DIR, "cart.json"),
+    "purchases":  os.path.join(DATA_DIR, "purchases.json"),
+}
 
 
-def get_connection():
-    """Подключение PostgreSQL с RealDictCursor"""
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
+# ============================
+#  ЧТЕНИЕ JSON
+# ============================
+def read_json(name):
+    path = FILES[name]
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
 
 
+# ============================
+#  ЗАПИСЬ JSON
+# ============================
+def write_json(name, data):
+    path = FILES[name]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+# ============================
+#  ГЕНЕРАТОР ID
+# ============================
+def next_id(records):
+    if not records:
+        return 1
+    return max(item["id"] for item in records) + 1
+
+
+# ============================
+#  ИНИЦИАЛИЗАЦИЯ (создание файлов)
+# ============================
 def init_db():
-    """Создание всех таблиц"""
-    conn = get_connection()
-    cur = conn.cursor()
-
-    # USERS
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT NOT NULL UNIQUE,
-            password TEXT NOT NULL,
-            balance INTEGER NOT NULL DEFAULT 0
-        );
-    """)
-
-    # COURSES — ВАЖНО: image TEXT (base64)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS courses (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            price INTEGER NOT NULL,
-            author TEXT NOT NULL,
-            description TEXT NOT NULL,
-            image TEXT
-        );
-    """)
-
-    # LESSONS
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS lessons (
-            id SERIAL PRIMARY KEY,
-            course_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            youtube_url TEXT NOT NULL,
-            position INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
-        );
-    """)
-
-    # CART
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS cart_items (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            course_id INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
-        );
-    """)
-
-    # PURCHASES
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS purchases (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            course_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
-        );
-    """)
-
-    # REVIEWS — stars INTEGER
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            course_id INTEGER NOT NULL,
-            stars INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE
-        );
-    """)
-
-    conn.commit()
-    conn.close()
+    for name, path in FILES.items():
+        if not os.path.exists(path):
+            write_json(name, [])
 
 
 if __name__ == "__main__":
     init_db()
-    print("Database initialized.")
+    print("JSON database initialized ✔")
