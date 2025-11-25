@@ -2,13 +2,13 @@ from flask import Blueprint, request, jsonify
 from db import get_connection
 import psycopg2.extras
 
-lessons_bp = Blueprint("lessons", __name__)
+lessons_bp = Blueprint("lessons", __name__, url_prefix="/api/lessons")
 
 
 # =========================================================
-# GET /api/lessons?course_id=ID — получить уроки курса
+# 📌 GET /api/lessons?course_id=ID — получить уроки курса
 # =========================================================
-@lessons_bp.get("/api/lessons")
+@lessons_bp.get("")
 def get_lessons():
     course_id = request.args.get("course_id", type=int)
     if not course_id:
@@ -31,7 +31,7 @@ def get_lessons():
 
 
 # =========================================================
-# Нормализация ссылок YouTube
+# 📌 Нормализация ссылок YouTube
 # =========================================================
 def normalize_youtube_url(url: str) -> str:
     url = url.strip()
@@ -52,9 +52,9 @@ def normalize_youtube_url(url: str) -> str:
 
 
 # =========================================================
-# POST /api/lessons/add — добавить урок
+# 📌 POST /api/lessons/add — добавить урок
 # =========================================================
-@lessons_bp.post("/api/lessons/add")
+@lessons_bp.post("/add")
 def add_lesson():
     data = request.get_json(force=True)
 
@@ -75,8 +75,10 @@ def add_lesson():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s",
-                (course_id,))
+    cur.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 AS pos FROM lessons WHERE course_id=%s",
+        (course_id,)
+    )
     pos = cur.fetchone()["pos"]
 
     cur.execute("""
@@ -94,9 +96,9 @@ def add_lesson():
 
 
 # =========================================================
-# POST /api/lessons/delete — удалить урок
+# 📌 POST /api/lessons/delete — удалить урок
 # =========================================================
-@lessons_bp.post("/api/lessons/delete")
+@lessons_bp.post("/delete")
 def delete_lesson():
     data = request.get_json(force=True)
     lesson_id = data.get("id")
