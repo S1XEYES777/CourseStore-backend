@@ -1,4 +1,3 @@
-# app.py
 import os
 import json
 from flask import Flask, request, jsonify
@@ -15,6 +14,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 COURSES_FILE = os.path.join(DATA_DIR, "courses.json")
 LESSONS_FILE = os.path.join(DATA_DIR, "lessons.json")
 REVIEWS_FILE = os.path.join(DATA_DIR, "reviews.json")
+CART_FILE = os.path.join(DATA_DIR, "cart.json")
 
 
 # ==========================
@@ -55,6 +55,11 @@ def course_public_dict(c):
     return c
 
 
+def get_course_by_id(course_id: int):
+    courses = load_json(COURSES_FILE)
+    return next((c for c in courses if int(c.get("id")) == course_id), None)
+
+
 # ==========================
 #  APP
 # ==========================
@@ -67,7 +72,6 @@ CORS(app, supports_credentials=True)
 # ==========================
 @app.errorhandler(Exception)
 def handle_any_error(e):
-    # В лог — подробности, клиенту — JSON
     print("SERVER ERROR:", repr(e))
     return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -102,7 +106,6 @@ def register():
 
     users = load_json(USERS_FILE)
 
-    # проверка телефона
     for u in users:
         if u.get("phone") == phone:
             return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
@@ -150,7 +153,6 @@ def api_get_courses():
     })
 
 
-# совместимость: и /api/courses/one, и /api/course
 def _get_course_with_lessons(course_id: int):
     courses = load_json(COURSES_FILE)
     lessons = load_json(LESSONS_FILE)
@@ -159,9 +161,7 @@ def _get_course_with_lessons(course_id: int):
     if not course:
         return None
 
-    course_lessons = [
-        l for l in lessons if int(l.get("course_id")) == course_id
-    ]
+    course_lessons = [l for l in lessons if int(l.get("course_id")) == course_id]
     course_lessons.sort(key=lambda x: int(x.get("position", 0)))
 
     c_pub = course_public_dict(course)
@@ -184,7 +184,6 @@ def api_get_course_one():
 
 @app.get("/api/course")
 def api_get_course_single_alias():
-    # для course.html: /api/course?course_id=
     return api_get_course_one()
 
 
@@ -275,17 +274,20 @@ def api_delete_course():
     courses = load_json(COURSES_FILE)
     lessons = load_json(LESSONS_FILE)
     reviews = load_json(REVIEWS_FILE)
+    cart = load_json(CART_FILE)
 
     courses = [c for c in courses if int(c.get("id")) != cid]
     lessons = [l for l in lessons if int(l.get("course_id")) != cid]
     reviews = [r for r in reviews if int(r.get("course_id")) != cid]
+    cart = [item for item in cart if int(item.get("course_id")) != cid]
 
     save_json(COURSES_FILE, courses)
     save_json(LESSONS_FILE, lessons)
     save_json(REVIEWS_FILE, reviews)
+    save_json(CART_FILE, cart)
 
     return jsonify({"status": "ok"})
-    
+
 
 # =========================================================
 #  УРОКИ
@@ -298,9 +300,7 @@ def api_get_lessons():
         return jsonify({"status": "error", "message": "Нет course_id"}), 400
 
     lessons = load_json(LESSONS_FILE)
-    result = [
-        l for l in lessons if int(l.get("course_id")) == course_id
-    ]
+    result = [l for l in lessons if int(l.get("course_id")) == course_id]
     result.sort(key=lambda x: int(x.get("position", 0)))
 
     return jsonify({"status": "ok", "lessons": result})
@@ -349,8 +349,7 @@ def api_delete_lesson():
 
 
 # =========================================================
-#  ОТЗЫВЫ (на будущее, чтобы не ломалось)
-# фронт сейчас почти не использует, но пусть будут
+#  ОТЗЫВЫ
 # =========================================================
 
 @app.get("/api/reviews")
@@ -401,13 +400,110 @@ def api_add_review():
 
 
 # =========================================================
+#  КОРЗИНА
+# =========================================================
+
+@app.get("/api/cart")
+def api_get_cart():
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"status": "error", "message": "Нет user_id"}), 400
+
+    cart = load_json(CART_FILE)
+    user_items = [item for item in cart if int(item.get("user_id")) == user_id]
+
+    courses = load_json(COURSES_FILE)
+    courses_by_id = {int(c["id"]): c for c in courses}
+
+    result = []
+    for item in user_items:
+        cid = int(item["course_id"])
+        course = courses_by_id.get(cid)
+        if not course:
+            continue
+        result.append({
+            "id": item["id"],
+            "course_id": cid,
+            "course": course_public_dict(course)
+        })
+
+    return jsonify({"status": "ok", "items": result})
+
+
+@app.post("/api/cart/add")
+def api_cart_add():
+    data = request.get_json(force=True)
+
+    user_id = data.get("user_id")
+    course_id = data.get("course_id")
+
+    if not user_id or not course_id:
+        return jsonify({"status": "error", "message": "Нет user_id или course_id"}), 400
+
+    course = get_course_by_id(int(course_id))
+    if not course:
+        return jsonify({"status": "error", "message": "Курс не найден"}), 404
+
+    cart = load_json(CART_FILE)
+
+    # не добавляем дубликаты
+    for item in cart:
+        if int(item.get("user_id")) == int(user_id) and int(item.get("course_id")) == int(course_id):
+            return jsonify({"status": "ok", "message": "Уже в корзине"})
+
+    cid = next_id(cart)
+    cart.append({
+        "id": cid,
+        "user_id": int(user_id),
+        "course_id": int(course_id)
+    })
+    save_json(CART_FILE, cart)
+
+    return jsonify({"status": "ok", "id": cid})
+
+
+@app.post("/api/cart/remove")
+def api_cart_remove():
+    data = request.get_json(force=True)
+
+    user_id = data.get("user_id")
+    course_id = data.get("course_id")
+
+    if not user_id or not course_id:
+        return jsonify({"status": "error", "message": "Нет user_id или course_id"}), 400
+
+    cart = load_json(CART_FILE)
+    new_cart = [
+        item for item in cart
+        if not (int(item.get("user_id")) == int(user_id) and int(item.get("course_id")) == int(course_id))
+    ]
+    save_json(CART_FILE, new_cart)
+
+    return jsonify({"status": "ok"})
+
+
+@app.post("/api/cart/clear")
+def api_cart_clear():
+    data = request.get_json(force=True)
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"status": "error", "message": "Нет user_id"}), 400
+
+    cart = load_json(CART_FILE)
+    cart = [item for item in cart if int(item.get("user_id")) != int(user_id)]
+    save_json(CART_FILE, cart)
+
+    return jsonify({"status": "ok"})
+
+
+# =========================================================
 #  АДМИН: ПОЛЬЗОВАТЕЛИ
 # =========================================================
 
 @app.get("/api/admin/users")
 def api_admin_users():
     users = load_json(USERS_FILE)
-    # пароли не убираю, потому что админке нужны
     return jsonify({"status": "ok", "users": users})
 
 
@@ -469,4 +565,3 @@ def api_admin_user_delete():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
