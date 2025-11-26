@@ -1,364 +1,663 @@
+import os
+import sqlite3
+from datetime import datetime
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import sqlite3
-import base64
-import os
+
+# ============================================================
+#  CONFIG
+# ============================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "database.db")
 
 app = Flask(__name__)
 CORS(app)
 
-DB = "database.db"
-
 
 # ============================================================
-# DB INIT
+#  DB UTILS
 # ============================================================
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def init_db():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
+    conn = get_db()
+    cur = conn.cursor()
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        phone TEXT UNIQUE,
-        password TEXT,
-        balance INTEGER DEFAULT 0
-    )
+    # USERS
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT UNIQUE,
+            password TEXT NOT NULL,
+            balance INTEGER DEFAULT 0
+        );
     """)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS courses(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        price INTEGER,
-        author TEXT,
-        description TEXT,
-        image TEXT
-    )
+
+    # COURSES
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS courses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            author TEXT,
+            description TEXT,
+            image TEXT
+        );
     """)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS lessons(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        course_id INTEGER,
-        title TEXT,
-        youtube_url TEXT,
-        position INTEGER
-    )
+
+    # LESSONS
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS lessons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            youtube_url TEXT,
+            position INTEGER DEFAULT 1,
+            FOREIGN KEY(course_id) REFERENCES courses(id)
+        );
     """)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS reviews(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        course_id INTEGER,
-        stars INTEGER,
-        text TEXT
-    )
+
+    # REVIEWS
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            course_id INTEGER NOT NULL,
+            stars INTEGER NOT NULL DEFAULT 5,
+            text TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(course_id) REFERENCES courses(id)
+        );
     """)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS cart(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        course_id INTEGER
-    )
+
+    # CART ITEMS
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cart_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            course_id INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(course_id) REFERENCES courses(id)
+        );
+    """)
+
+    # PURCHASES
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            course_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(course_id) REFERENCES courses(id)
+        );
     """)
 
     conn.commit()
     conn.close()
 
 
+def row_to_dict(row):
+    return {k: row[k] for k in row.keys()}
+
+
 # ============================================================
-# 🔥 ПИНГ — проверка сервера
+#  SERVICE
 # ============================================================
-@app.get("/api/ping")
+
+@app.route("/api/ping", methods=["GET"])
 def ping():
     return jsonify({"status": "ok"})
 
 
 # ============================================================
-# 🟦 COURSES
+#  AUTH (регистрация / логин)
 # ============================================================
-@app.get("/api/courses")
-def get_courses():
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
 
-    c.execute("SELECT * FROM courses ORDER BY id DESC")
-    rows = c.fetchall()
-    conn.close()
+@app.route("/api/register", methods=["POST"])
+def register():
+    data = request.get_json(force=True)
+    name = data.get("name", "").strip()
+    phone = data.get("phone", "").strip()
+    password = data.get("password", "").strip()
 
-    return jsonify({"status": "ok", "courses": [dict(r) for r in rows]})
+    if not name or not phone or not password:
+        return jsonify({"status": "error", "message": "Заполни все поля"}), 400
 
+    conn = get_db()
+    cur = conn.cursor()
 
-@app.post("/api/courses/add")
-def add_course():
-    data = request.get_json()
+    cur.execute("SELECT id FROM users WHERE phone = ?", (phone,))
+    exists = cur.fetchone()
+    if exists:
+        conn.close()
+        return jsonify({"status": "error", "message": "Номер уже зарегистрирован"})
 
-    title = data.get("title")
-    price = data.get("price")
-    author = data.get("author")
-    desc = data.get("description")
-    img = data.get("image")
-
-    if not title or not price or not author or not desc or not img:
-        return jsonify({"status": "error", "message": "Неверные данные"}), 400
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO courses (title, price, author, description, image)
-        VALUES (?, ?, ?, ?, ?)
-    """, (title, price, author, desc, img))
-
-    course_id = c.lastrowid
+    cur.execute(
+        "INSERT INTO users (name, phone, password, balance) VALUES (?, ?, ?, 0)",
+        (name, phone, password)
+    )
     conn.commit()
+    uid = cur.lastrowid
     conn.close()
-
-    return jsonify({"status": "ok", "course_id": course_id})
-
-
-@app.post("/api/courses/update")
-def update_course():
-    data = request.get_json()
-
-    course_id = data.get("id")
-    title = data.get("title")
-    price = data.get("price")
-    author = data.get("author")
-    description = data.get("description")
-    img = data.get("image")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    if img:
-        c.execute("""
-            UPDATE courses SET title=?, price=?, author=?, description=?, image=?
-            WHERE id=?
-        """, (title, price, author, description, img, course_id))
-    else:
-        c.execute("""
-            UPDATE courses SET title=?, price=?, author=?, description=?
-            WHERE id=?
-        """, (title, price, author, description, course_id))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-@app.post("/api/courses/delete")
-def delete_course():
-    data = request.get_json()
-    course_id = data.get("id")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    c.execute("DELETE FROM lessons WHERE course_id=?", (course_id,))
-    c.execute("DELETE FROM reviews WHERE course_id=?", (course_id,))
-    c.execute("DELETE FROM cart WHERE course_id=?", (course_id,))
-    c.execute("DELETE FROM courses WHERE id=?", (course_id,))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# 🎬 LESSONS
-# ============================================================
-@app.get("/api/lessons")
-def get_lessons():
-    cid = request.args.get("course_id")
-
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-
-    c.execute("""
-        SELECT * FROM lessons
-        WHERE course_id=?
-        ORDER BY position ASC
-    """, (cid,))
-
-    rows = c.fetchall()
-    conn.close()
-
-    return jsonify({"status": "ok", "lessons": [dict(r) for r in rows]})
-
-
-@app.post("/api/lessons/add")
-def add_lesson():
-    data = request.get_json()
-
-    cid = data.get("course_id")
-    title = data.get("title")
-    url = data.get("youtube_url")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    c.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM lessons WHERE course_id=?", (cid,))
-    pos = c.fetchone()[0]
-
-    c.execute("""
-        INSERT INTO lessons(course_id, title, youtube_url, position)
-        VALUES (?, ?, ?, ?)
-    """, (cid, title, url, pos))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-@app.post("/api/lessons/delete")
-def delete_lesson():
-    data = request.get_json()
-    lid = data.get("id")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("DELETE FROM lessons WHERE id=?", (lid,))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# 👤 USERS
-# ============================================================
-@app.get("/api/admin/users")
-def admin_get_users():
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-
-    c.execute("SELECT * FROM users ORDER BY id DESC")
-    rows = c.fetchall()
-
-    conn.close()
-    return jsonify({"status": "ok", "users": [dict(r) for r in rows]})
-
-
-@app.post("/api/admin/users/update")
-def admin_update_user():
-    data = request.get_json()
-
-    uid = data.get("id")
-    name = data.get("name")
-    phone = data.get("phone")
-    password = data.get("password")
-    balance = data.get("balance")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    c.execute("""
-        UPDATE users SET name=?, phone=?, password=?, balance=?
-        WHERE id=?
-    """, (name, phone, password, balance, uid))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-@app.post("/api/admin/users/delete")
-def admin_delete_user():
-    data = request.get_json()
-    uid = data.get("id")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    c.execute("DELETE FROM reviews WHERE user_id=?", (uid,))
-    c.execute("DELETE FROM cart WHERE user_id=?", (uid,))
-    c.execute("DELETE FROM users WHERE id=?", (uid,))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# 🛒 CART
-# ============================================================
-@app.post("/api/cart/add")
-def cart_add():
-    data = request.get_json()
-
-    uid = data.get("user_id")
-    cid = data.get("course_id")
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    c.execute("SELECT id FROM cart WHERE user_id=? AND course_id=?", (uid, cid))
-    if c.fetchone():
-        return jsonify({"status": "error", "message": "Уже в корзине"})
-
-    c.execute("INSERT INTO cart(user_id, course_id) VALUES (?, ?)", (uid, cid))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-@app.get("/api/cart")
-def cart_get():
-    uid = request.args.get("user_id")
-
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-
-    c.execute("""
-    SELECT cart.id AS cart_id, courses.*
-    FROM cart
-    JOIN courses ON courses.id = cart.course_id
-    WHERE cart.user_id=?
-    """, (uid,))
-
-    rows = c.fetchall()
-
-    conn.close()
-
-    total = sum(r["price"] for r in rows)
 
     return jsonify({
         "status": "ok",
-        "items": [dict(r) for r in rows],
-        "total": total
+        "user": {
+            "user_id": uid,
+            "name": name,
+            "phone": phone,
+            "balance": 0
+        }
+    })
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json(force=True)
+    phone = data.get("phone", "").strip()
+    password = data.get("password", "").strip()
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users WHERE phone = ?", (phone,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row or row["password"] != password:
+        return jsonify({"status": "error", "message": "Неверный телефон или пароль"})
+
+    user = row_to_dict(row)
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "user_id": user["id"],
+            "name": user["name"],
+            "phone": user["phone"],
+            "balance": user["balance"]
+        }
     })
 
 
 # ============================================================
-# ⭐ REVIEWS
+#  PROFILE / BALANCE / МОИ КУРСЫ
 # ============================================================
-@app.post("/api/reviews/add")
-def add_review():
-    data = request.get_json()
 
-    uid = data.get("user_id")
-    cid = data.get("course_id")
-    stars = data.get("stars")
-    text = data.get("text")
+@app.route("/api/profile", methods=["GET"])
+def profile():
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_id required"}), 400
 
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
+    conn = get_db()
+    cur = conn.cursor()
 
-    c.execute("""
-        INSERT INTO reviews(user_id, course_id, stars, text)
+    cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
+
+    user = row_to_dict(row)
+
+    # количество купленных курсов
+    cur.execute("SELECT COUNT(*) AS c FROM purchases WHERE user_id = ?", (user_id,))
+    cnt = cur.fetchone()["c"]
+
+    conn.close()
+
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "phone": user["phone"],
+            "balance": user["balance"],
+            "purchases": cnt
+        }
+    })
+
+
+@app.route("/api/profile/add_balance", methods=["POST"])
+def add_balance():
+    data = request.get_json(force=True)
+    user_id = int(data.get("user_id", 0))
+    amount = int(data.get("amount", 0))
+
+    if not user_id or amount <= 0:
+        return jsonify({"status": "error", "message": "Некорректная сумма"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
+    conn.commit()
+
+    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    return jsonify({"status": "ok", "balance": row["balance"]})
+
+
+@app.route("/api/my-courses", methods=["GET"])
+def my_courses():
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT c.id, c.title, c.author, c.price, c.description, c.image
+        FROM purchases p
+        JOIN courses c ON c.id = p.course_id
+        WHERE p.user_id = ?
+        GROUP BY c.id
+    """, (user_id,))
+    courses = [row_to_dict(r) for r in cur.fetchall()]
+
+    conn.close()
+    return jsonify({"status": "ok", "courses": courses})
+
+
+# ============================================================
+#  COURSES
+# ============================================================
+
+@app.route("/api/courses", methods=["GET"])
+def get_courses():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM courses ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    courses = []
+    for r in rows:
+        d = row_to_dict(r)
+        # для фронта/Tk
+        d["image_url"] = None
+        courses.append(d)
+
+    return jsonify({"status": "ok", "courses": courses})
+
+
+@app.route("/api/courses/add", methods=["POST"])
+def add_course():
+    data = request.get_json(force=True)
+    title = data.get("title", "").strip()
+    price = int(data.get("price", 0))
+    author = data.get("author", "").strip()
+    description = data.get("description", "").strip()
+    image = data.get("image")
+
+    if not title or not author or not description or price <= 0:
+        return jsonify({"status": "error", "message": "Некорректные данные курса"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO courses (title, price, author, description, image)
+        VALUES (?, ?, ?, ?, ?)
+    """, (title, price, author, description, image))
+    conn.commit()
+    cid = cur.lastrowid
+    conn.close()
+
+    return jsonify({"status": "ok", "id": cid, "course_id": cid})
+
+
+@app.route("/api/courses/update", methods=["POST"])
+def update_course():
+    data = request.get_json(force=True)
+    cid = int(data.get("id", 0))
+    title = data.get("title", "").strip()
+    price = int(data.get("price", 0))
+    author = data.get("author", "").strip()
+    description = data.get("description", "").strip()
+    image = data.get("image", None)
+
+    if not cid or not title or not author or not description or price <= 0:
+        return jsonify({"status": "error", "message": "Некорректные данные"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if image:
+        cur.execute("""
+            UPDATE courses
+            SET title=?, price=?, author=?, description=?, image=?
+            WHERE id=?
+        """, (title, price, author, description, image, cid))
+    else:
+        cur.execute("""
+            UPDATE courses
+            SET title=?, price=?, author=?, description=?
+            WHERE id=?
+        """, (title, price, author, description, cid))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/courses/delete", methods=["POST"])
+def delete_course():
+    data = request.get_json(force=True)
+    cid = int(data.get("id", 0))
+
+    if not cid:
+        return jsonify({"status": "error", "message": "id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM lessons WHERE course_id = ?", (cid,))
+    cur.execute("DELETE FROM cart_items WHERE course_id = ?", (cid,))
+    cur.execute("DELETE FROM purchases WHERE course_id = ?", (cid,))
+    cur.execute("DELETE FROM reviews WHERE course_id = ?", (cid,))
+    cur.execute("DELETE FROM courses WHERE id = ?", (cid,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# ============================================================
+#  LESSONS
+# ============================================================
+
+@app.route("/api/lessons", methods=["GET"])
+def get_lessons():
+    course_id = request.args.get("course_id", type=int)
+    if not course_id:
+        return jsonify({"status": "error", "lessons": []})
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT * FROM lessons
+        WHERE course_id = ?
+        ORDER BY position ASC, id ASC
+    """, (course_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    lessons = [row_to_dict(r) for r in rows]
+    return jsonify({"status": "ok", "lessons": lessons})
+
+
+@app.route("/api/lessons/add", methods=["POST"])
+def add_lesson():
+    data = request.get_json(force=True)
+    course_id = int(data.get("course_id", 0))
+    title = data.get("title", "").strip()
+    youtube_url = data.get("youtube_url", "").strip()
+    position = int(data.get("position", 0))
+
+    if not course_id or not title or not youtube_url:
+        return jsonify({"status": "error", "message": "Поля урока пустые"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if position <= 0:
+        cur.execute("SELECT COALESCE(MAX(position),0)+1 AS p FROM lessons WHERE course_id = ?", (course_id,))
+        position = cur.fetchone()["p"]
+
+    cur.execute("""
+        INSERT INTO lessons (course_id, title, youtube_url, position)
         VALUES (?, ?, ?, ?)
-    """, (uid, cid, stars, text))
+    """, (course_id, title, youtube_url, position))
+    conn.commit()
+    lid = cur.lastrowid
+    conn.close()
+
+    return jsonify({"status": "ok", "id": lid})
+
+
+@app.route("/api/lessons/delete", methods=["POST"])
+def delete_lesson():
+    data = request.get_json(force=True)
+    lid = int(data.get("id", 0))
+
+    if not lid:
+        return jsonify({"status": "error", "message": "id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM lessons WHERE id = ?", (lid,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# ============================================================
+#  CART
+# ============================================================
+
+@app.route("/api/cart", methods=["GET"])
+def get_cart():
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_id required", "items": []})
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            ci.id AS cart_id,
+            c.id AS course_id,
+            c.title,
+            c.author,
+            c.price,
+            c.description,
+            c.image
+        FROM cart_items ci
+        JOIN courses c ON c.id = ci.course_id
+        WHERE ci.user_id = ?
+    """, (user_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    items = []
+    for r in rows:
+        d = row_to_dict(r)
+        d["image_url"] = None
+        items.append(d)
+
+    return jsonify({"status": "ok", "items": items})
+
+
+@app.route("/api/cart/add", methods=["POST"])
+def cart_add():
+    data = request.get_json(force=True)
+    user_id = int(data.get("user_id", 0))
+    course_id = int(data.get("course_id", 0))
+
+    if not user_id or not course_id:
+        return jsonify({"status": "error", "message": "user_id и course_id обязательны"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # не дублируем
+    cur.execute("""
+        SELECT id FROM cart_items
+        WHERE user_id = ? AND course_id = ?
+    """, (user_id, course_id))
+    if cur.fetchone():
+        conn.close()
+        return jsonify({"status": "ok", "message": "Уже в корзине"})
+
+    cur.execute("""
+        INSERT INTO cart_items (user_id, course_id)
+        VALUES (?, ?)
+    """, (user_id, course_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/cart/remove", methods=["POST"])
+def cart_remove():
+    data = request.get_json(force=True)
+    cart_id = int(data.get("cart_id", 0))
+
+    if not cart_id:
+        return jsonify({"status": "error", "message": "cart_id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM cart_items WHERE id = ?", (cart_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/cart/buy", methods=["POST"])
+def cart_buy():
+    data = request.get_json(force=True)
+    user_id = int(data.get("user_id", 0))
+
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # все позиции
+    cur.execute("""
+        SELECT ci.course_id, c.price
+        FROM cart_items ci
+        JOIN courses c ON c.id = ci.course_id
+        WHERE ci.user_id = ?
+    """, (user_id,))
+    rows = cur.fetchall()
+
+    if not rows:
+        conn.close()
+        return jsonify({"status": "error", "message": "Корзина пуста"})
+
+    total = sum(r["price"] for r in rows)
+
+    # проверяем баланс
+    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    u = cur.fetchone()
+    if not u:
+        conn.close()
+        return jsonify({"status": "error", "message": "Пользователь не найден"})
+
+    balance = u["balance"]
+    if balance < total:
+        conn.close()
+        return jsonify({"status": "error", "message": "Недостаточно средств"})
+
+    # списываем деньги
+    cur.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (total, user_id))
+
+    # добавляем покупки (без дублей)
+    for r in rows:
+        cid = r["course_id"]
+        cur.execute("""
+            SELECT id FROM purchases
+            WHERE user_id = ? AND course_id = ?
+        """, (user_id, cid))
+        exists = cur.fetchone()
+        if not exists:
+            cur.execute("""
+                INSERT INTO purchases (user_id, course_id, created_at)
+                VALUES (?, ?, ?)
+            """, (user_id, cid, datetime.utcnow().isoformat()))
+
+    # очищаем корзину
+    cur.execute("DELETE FROM cart_items WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "total": total})
+
+
+# ============================================================
+#  ADMIN: USERS
+# ============================================================
+
+@app.route("/api/admin/users", methods=["GET"])
+def admin_users():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, phone, balance FROM users ORDER BY id ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    users = [row_to_dict(r) for r in rows]
+    return jsonify({"status": "ok", "users": users})
+
+
+@app.route("/api/admin/users/update", methods=["POST"])
+def admin_user_update():
+    data = request.get_json(force=True)
+    uid = int(data.get("id", 0))
+    name = data.get("name", "").strip()
+    phone = data.get("phone", "").strip()
+    password = data.get("password", "").strip()
+    balance = int(data.get("balance", 0))
+
+    if not uid or not name or not phone:
+        return jsonify({"status": "error", "message": "Некорректные данные"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if password:
+        cur.execute("""
+            UPDATE users
+            SET name=?, phone=?, password=?, balance=?
+            WHERE id=?
+        """, (name, phone, password, balance, uid))
+    else:
+        cur.execute("""
+            UPDATE users
+            SET name=?, phone=?, balance=?
+            WHERE id=?
+        """, (name, phone, balance, uid))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/admin/users/delete", methods=["POST"])
+def admin_user_delete():
+    data = request.get_json(force=True)
+    uid = int(data.get("id", 0))
+
+    if not uid:
+        return jsonify({"status": "error", "message": "id required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM cart_items WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM purchases WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM reviews WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM users WHERE id = ?", (uid,))
 
     conn.commit()
     conn.close()
@@ -367,8 +666,11 @@ def add_review():
 
 
 # ============================================================
-# STARTUP
+#  ENTRY POINT
 # ============================================================
+
+init_db()
+
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000)
+    # локальный запуск
+    app.run(host="0.0.0.0", port=5000, debug=True)
