@@ -15,7 +15,7 @@ CORS(app)
 #  DATABASE_URL
 # =======================================
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv(postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore)
 
 if not DATABASE_URL:
     raise RuntimeError(
@@ -535,3 +535,4 @@ def admin_purchases():
 
 if __name__ == "__main__":
     app.run(port=5000, host="0.0.0.0", debug=True)
+
