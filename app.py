@@ -4,26 +4,30 @@ from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
 
-# =======================================
-#  FLASK + CORS
-# =======================================
+
+# ==========================
+#  Flask + CORS
+# ==========================
 
 app = Flask(__name__)
 CORS(app)
 
-# =======================================
-#  DATABASE_URL
-# =======================================
 
-DATABASE_URL = os.getenv(postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore)
+# ==========================
+#  DATABASE_URL из ENV
+# ==========================
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise RuntimeError(
-        "DATABASE_URL не найден! "
-        "В панели Render → Environment Variables добавь DATABASE_URL."
+        "❌ DATABASE_URL не найден!\n"
+        "Зайди в Render → Environment → добавь переменную DATABASE_URL."
     )
 
+
 def get_db():
+    """Подключение к PostgreSQL"""
     return psycopg2.connect(
         DATABASE_URL,
         sslmode="require",
@@ -31,9 +35,9 @@ def get_db():
     )
 
 
-# =======================================
-#  INIT DB
-# =======================================
+# ==========================
+#  ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ
+# ==========================
 
 def init_db():
     conn = get_db()
@@ -87,8 +91,8 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS purchases (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users(id),
+            course_id INTEGER REFERENCES courses(id),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -109,28 +113,30 @@ def init_db():
     conn.close()
 
 
-init_db()  # запуск при старте сервера
+# Инициализация таблиц при запуске
+init_db()
 
 
-# =======================================
+# ==========================
 #  PING
-# =======================================
+# ==========================
 
 @app.get("/api/ping")
 def ping():
     return {"status": "ok"}
 
 
-# =======================================
-#  AUTH
-# =======================================
+# ==========================
+#  REGISTER + LOGIN
+# ==========================
 
 @app.post("/api/register")
 def register():
     data = request.get_json(force=True)
-    name = data.get("name", "").strip()
-    phone = data.get("phone", "").strip()
-    password = data.get("password", "").strip()
+
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
     if not name or not phone or not password:
         return {"status": "error", "message": "Заполните все поля"}
@@ -138,7 +144,7 @@ def register():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT id FROM users WHERE phone=%s", (phone,))
+    cur.execute("SELECT id FROM users WHERE phone = %s", (phone,))
     if cur.fetchone():
         conn.close()
         return {"status": "error", "message": "Телефон уже зарегистрирован"}
@@ -153,31 +159,50 @@ def register():
     conn.commit()
     conn.close()
 
-    return {"status": "ok", "user": user}
+    return {
+        "status": "ok",
+        "user": {
+            "user_id": user["id"],
+            "name": user["name"],
+            "phone": user["phone"],
+            "balance": user["balance"],
+            "avatar": user["avatar"],
+        }
+    }
 
 
 @app.post("/api/login")
 def login():
     data = request.get_json(force=True)
-    phone = data.get("phone", "").strip()
-    password = data.get("password", "").strip()
+
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute("SELECT * FROM users WHERE phone = %s", (phone,))
-    user = cur.fetchone()
+    row = cur.fetchone()
     conn.close()
 
-    if not user or user["password"] != password:
+    if not row or row["password"] != password:
         return {"status": "error", "message": "Неверный телефон или пароль"}
 
-    return {"status": "ok", "user": user}
+    return {
+        "status": "ok",
+        "user": {
+            "user_id": row["id"],
+            "name": row["name"],
+            "phone": row["phone"],
+            "balance": row["balance"],
+            "avatar": row["avatar"],
+        }
+    }
 
 
-# =======================================
-#  USER PROFILE
-# =======================================
+# ==========================
+#  PROFILE
+# ==========================
 
 @app.get("/api/user")
 def get_user():
@@ -185,34 +210,37 @@ def get_user():
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
-    user = cur.fetchone()
+
+    cur.execute("SELECT * FROM users WHERE id = %s", (uid,))
+    row = cur.fetchone()
     conn.close()
 
-    if not user:
+    if not row:
         return {"status": "error", "message": "Пользователь не найден"}
 
-    return {"status": "ok", "user": user}
+    return {"status": "ok", "user": row}
 
 
 @app.post("/api/avatar")
 def update_avatar():
     data = request.get_json(force=True)
+
     uid = data.get("user_id")
     avatar = data.get("avatar")
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (avatar, uid))
+
+    cur.execute("UPDATE users SET avatar = %s WHERE id = %s", (avatar, uid))
     conn.commit()
     conn.close()
 
     return {"status": "ok"}
 
 
-# =======================================
+# ==========================
 #  COURSES
-# =======================================
+# ==========================
 
 @app.get("/api/courses")
 def get_courses():
@@ -231,29 +259,26 @@ def get_course():
     conn = get_db()
     cur = conn.cursor()
 
-    # Course
-    cur.execute("SELECT * FROM courses WHERE id=%s", (cid,))
+    cur.execute("SELECT * FROM courses WHERE id = %s", (cid,))
     course = cur.fetchone()
 
     if not course:
         conn.close()
         return {"status": "error", "message": "Курс не найден"}
 
-    # Lessons
     cur.execute("""
         SELECT * FROM lessons
-        WHERE course_id=%s
+        WHERE course_id = %s
         ORDER BY position ASC
     """, (cid,))
     lessons = cur.fetchall()
 
-    # Reviews
     cur.execute("""
         SELECT r.*, u.name AS user_name
         FROM reviews r
         JOIN users u ON u.id = r.user_id
-        WHERE course_id=%s
-        ORDER BY created_at DESC
+        WHERE r.course_id = %s
+        ORDER BY r.created_at DESC
     """, (cid,))
     reviews = cur.fetchall()
 
@@ -267,9 +292,12 @@ def get_course():
     }
 
 
-# ADD COURSE
-@app.post("/api/courses/add")
-def add_course():
+# ==========================
+#  ADD COURSE (ADMIN)
+# ==========================
+
+@app.post("/api/admin/add-course")
+def admin_add_course():
     data = request.get_json(force=True)
 
     title = data.get("title")
@@ -295,14 +323,17 @@ def add_course():
     return {"status": "ok", "course_id": cid}
 
 
-# ADD LESSON
+# ==========================
+#  LESSONS
+# ==========================
+
 @app.post("/api/lessons/add")
 def add_lesson():
     data = request.get_json(force=True)
 
-    course_id = data.get("course_id")
+    cid = data.get("course_id")
     title = data.get("title")
-    url = data.get("youtube_url")
+    video_url = data.get("video_url")
     position = data.get("position", 1)
 
     conn = get_db()
@@ -311,7 +342,7 @@ def add_lesson():
     cur.execute("""
         INSERT INTO lessons (course_id, title, video_url, position)
         VALUES (%s, %s, %s, %s)
-    """, (course_id, title, url, position))
+    """, (cid, title, video_url, position))
 
     conn.commit()
     conn.close()
@@ -319,22 +350,9 @@ def add_lesson():
     return {"status": "ok"}
 
 
-@app.post("/api/lessons/delete")
-def delete_lesson():
-    lid = request.get_json().get("id")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM lessons WHERE id=%s", (lid,))
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-# =======================================
-#  CART + BUY
-# =======================================
+# ==========================
+#  CART
+# ==========================
 
 @app.get("/api/cart")
 def get_cart():
@@ -342,21 +360,24 @@ def get_cart():
 
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute("""
         SELECT ci.id AS cart_id, c.*
         FROM cart_items ci
         JOIN courses c ON c.id = ci.course_id
-        WHERE ci.user_id=%s
+        WHERE ci.user_id = %s
     """, (uid,))
     rows = cur.fetchall()
 
     conn.close()
+
     return {"status": "ok", "items": rows}
 
 
 @app.post("/api/cart/add")
-def add_cart_item():
+def add_to_cart():
     data = request.get_json(force=True)
+
     uid = data.get("user_id")
     cid = data.get("course_id")
 
@@ -364,7 +385,8 @@ def add_cart_item():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id FROM cart_items WHERE user_id=%s AND course_id=%s
+        SELECT id FROM cart_items
+        WHERE user_id = %s AND course_id = %s
     """, (uid, cid))
 
     if cur.fetchone():
@@ -383,12 +405,16 @@ def add_cart_item():
 
 
 @app.post("/api/cart/remove")
-def remove_cart_item():
-    cid = request.get_json().get("cart_id")
+def remove_from_cart():
+    data = request.get_json(force=True)
+
+    cart_id = data.get("cart_id")
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM cart_items WHERE id=%s", (cid,))
+
+    cur.execute("DELETE FROM cart_items WHERE id = %s", (cart_id,))
+
     conn.commit()
     conn.close()
 
@@ -396,18 +422,20 @@ def remove_cart_item():
 
 
 @app.post("/api/cart/buy")
-def buy_cart():
-    uid = request.get_json().get("user_id")
+def buy():
+    data = request.get_json(force=True)
+
+    uid = data.get("user_id")
 
     conn = get_db()
     cur = conn.cursor()
 
-    # Courses from cart
+    # Получаем корзину
     cur.execute("""
         SELECT c.id, c.price
         FROM cart_items ci
         JOIN courses c ON c.id = ci.course_id
-        WHERE ci.user_id=%s
+        WHERE ci.user_id = %s
     """, (uid,))
     items = cur.fetchall()
 
@@ -415,28 +443,28 @@ def buy_cart():
         conn.close()
         return {"status": "error", "message": "Корзина пуста"}
 
-    total = sum(x["price"] for x in items)
+    total = sum(i["price"] for i in items)
 
-    # Balance check
-    cur.execute("SELECT balance FROM users WHERE id=%s", (uid,))
+    # Баланс
+    cur.execute("SELECT balance FROM users WHERE id = %s", (uid,))
     bal = cur.fetchone()["balance"]
 
     if bal < total:
         conn.close()
         return {"status": "error", "message": "Недостаточно средств"}
 
-    # Balance update
-    cur.execute("UPDATE users SET balance=balance-%s WHERE id=%s", (total, uid))
+    # Списываем
+    cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (total, uid))
 
-    # Save purchases
+    # Добавляем покупки
     for it in items:
         cur.execute("""
             INSERT INTO purchases (user_id, course_id)
             VALUES (%s, %s)
         """, (uid, it["id"]))
 
-    # Clear cart
-    cur.execute("DELETE FROM cart_items WHERE user_id=%s", (uid,))
+    # Чистим корзину
+    cur.execute("DELETE FROM cart_items WHERE user_id = %s", (uid,))
 
     conn.commit()
     conn.close()
@@ -444,28 +472,29 @@ def buy_cart():
     return {"status": "ok"}
 
 
-# MY COURSES
 @app.get("/api/my-courses")
 def my_courses():
     uid = request.args.get("user_id")
 
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute("""
         SELECT c.*
         FROM purchases p
         JOIN courses c ON c.id = p.course_id
-        WHERE p.user_id=%s
+        WHERE p.user_id = %s
     """, (uid,))
     rows = cur.fetchall()
 
     conn.close()
+
     return {"status": "ok", "courses": rows}
 
 
-# =======================================
+# ==========================
 #  REVIEWS
-# =======================================
+# ==========================
 
 @app.post("/api/reviews/add")
 def add_review():
@@ -473,8 +502,8 @@ def add_review():
 
     uid = data.get("user_id")
     cid = data.get("course_id")
-    stars = data.get("stars", 5)
-    text = data.get("text", "")
+    stars = data.get("stars")
+    text = data.get("text")
 
     conn = get_db()
     cur = conn.cursor()
@@ -490,49 +519,52 @@ def add_review():
     return {"status": "ok"}
 
 
-# =======================================
-#           ADMIN PANEL
-# =======================================
+# ==========================
+#  ADMIN: все пользователи, курсы, уроки
+# ==========================
 
-# --- USERS LIST ---
 @app.get("/api/admin/users")
 def admin_users():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, phone, balance FROM users ORDER BY id DESC")
-    data = cur.fetchall()
+
+    cur.execute("SELECT * FROM users ORDER BY id DESC")
+    rows = cur.fetchall()
+
     conn.close()
-    return {"status": "ok", "users": data}
+
+    return {"status": "ok", "users": rows}
 
 
-# --- PURCHASES LIST ---
-@app.get("/api/admin/purchases")
-def admin_purchases():
+@app.get("/api/admin/courses")
+def admin_courses():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT p.id,
-               u.name AS user_name,
-               c.title AS course_title,
-               c.price,
-               p.created_at
-        FROM purchases p
-        JOIN users u ON u.id = p.user_id
-        JOIN courses c ON c.id = p.course_id
-        ORDER BY p.id DESC
-    """)
+    cur.execute("SELECT * FROM courses ORDER BY id DESC")
+    rows = cur.fetchall()
 
-    items = cur.fetchall()
     conn.close()
 
-    return {"status": "ok", "items": items}
+    return {"status": "ok", "courses": rows}
 
 
-# =======================================
-#  RUN LOCAL
-# =======================================
+@app.get("/api/admin/lessons")
+def admin_lessons():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM lessons ORDER BY id DESC")
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return {"status": "ok", "lessons": rows}
+
+
+# ==========================
+#  LOCAL DEBUG
+# ==========================
 
 if __name__ == "__main__":
-    app.run(port=5000, host="0.0.0.0", debug=True)
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
