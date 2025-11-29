@@ -8,7 +8,7 @@ import psycopg2.extras
 # ==============================
 #   POSTGRES ДЛЯ RENDER
 # ==============================
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("postgresql://coursestore_user:QpbQO0QAxRIwMRLVShTDgVSplVOMiZVQ@dpg-d4d05l0gjchc73dmfld0-a.oregon-postgres.render.com/coursestore?sslmode=require\")
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL не установлен в Render!")
@@ -395,3 +395,4 @@ def add_review():
 # ==============================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
