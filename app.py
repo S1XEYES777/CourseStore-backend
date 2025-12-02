@@ -23,9 +23,6 @@ def get_connection():
 # ============================================================
 
 def recalc_course_rating(course_id, conn=None):
-    """
-    Пересчитывает средний рейтинг курса.
-    """
     close = False
     if conn is None:
         conn = get_connection()
@@ -63,7 +60,7 @@ def get_courses():
     user_id = request.args.get("user_id", type=int)
 
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycgopg2.extras.RealDictCursor)
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     if user_id:
         cur.execute("""
@@ -99,20 +96,19 @@ def course_details(course_id):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # сам курс
     cur.execute("""
         SELECT id, title, description, price,
                thumbnail, avg_rating, ratings_count
         FROM courses
         WHERE id = %s
     """, (course_id,))
-
     course = cur.fetchone()
+
     if not course:
         conn.close()
         return jsonify({"status": "error", "message": "Курс не найден"}), 404
 
-    # проверяем покупку
+    # Покупка?
     is_purchased = False
     if user_id:
         cur.execute("""
@@ -123,7 +119,6 @@ def course_details(course_id):
 
     course["is_purchased"] = is_purchased
 
-    # уроки только если куплен
     lessons = []
     if is_purchased:
         cur.execute("""
@@ -135,7 +130,6 @@ def course_details(course_id):
         lessons = cur.fetchall()
 
     conn.close()
-
     return jsonify({"status": "ok", "course": course, "lessons": lessons})
 
 
@@ -161,7 +155,7 @@ def get_cart():
         FROM cart_items ci
         JOIN courses c ON c.id = ci.course_id
         WHERE ci.user_id = %s
-        ORDER BY ci.addadded_at DESC
+        ORDER BY ci.added_at DESC
     """, (user_id,))
 
     items = cur.fetchall()
@@ -182,7 +176,7 @@ def cart_add():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Проверяем — уже куплен?
+    # Уже куплен?
     cur.execute("""
         SELECT 1 FROM purchases
         WHERE user_id = %s AND course_id = %s
@@ -219,7 +213,6 @@ def cart_remove():
 
     conn.commit()
     conn.close()
-
     return jsonify({"status": "ok"})
 
 
@@ -239,7 +232,7 @@ def purchase():
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # проверяем — уже купил?
+    # Уже купил?
     cur.execute("""
         SELECT 1 FROM purchases
         WHERE user_id = %s AND course_id = %s
@@ -248,15 +241,16 @@ def purchase():
         conn.close()
         return jsonify({"status": "error", "message": "Курс уже куплен"}), 400
 
-    # цена курса
+    # Цена
     cur.execute("SELECT price FROM courses WHERE id = %s", (course_id,))
     c = cur.fetchone()
     if not c:
         conn.close()
         return jsonify({"status": "error", "message": "Курс не найден"}), 404
+
     price = c["price"]
 
-    # баланс пользователя
+    # Баланс
     cur.execute("SELECT balance FROM users WHERE id = %s FOR UPDATE", (user_id,))
     u = cur.fetchone()
     if not u:
@@ -268,11 +262,9 @@ def purchase():
         conn.close()
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
-    # списываем, добавляем покупку, очищаем корзину
+    # Покупка
     cur.execute("""
-        UPDATE users
-        SET balance = balance - %s
-        WHERE id = %s
+        UPDATE users SET balance = balance - %s WHERE id = %s
     """, (price, user_id))
 
     cur.execute("""
@@ -287,12 +279,11 @@ def purchase():
 
     conn.commit()
     conn.close()
-
     return jsonify({"status": "ok"})
 
 
 # ============================================================
-# ОТЗЫВЫ (REVIEWS)
+# ОТЗЫВЫ
 # ============================================================
 
 @app.post("/api/reviews")
@@ -316,8 +307,8 @@ def add_review():
 
     conn.commit()
     recalc_course_rating(course_id, conn)
-
     conn.close()
+
     return jsonify({"status": "ok"})
 
 
@@ -328,7 +319,6 @@ def get_reviews(course_id):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    # плохие <3 видны только автору
     cur.execute("""
         SELECT r.id, r.user_id, r.rating, r.text,
                r.created_at, u.name AS user_name
@@ -355,6 +345,7 @@ def get_reviews(course_id):
 @app.get("/api/profile/my-courses")
 def my_courses():
     user_id = request.args.get("user_id", type=int)
+
     if not user_id:
         return jsonify({"status": "error", "message": "user_id обязателен"}), 400
 
@@ -377,7 +368,7 @@ def my_courses():
 
 
 # ============================================================
-# АДМИН — ВСЕ ОЦЕНКИ + УДАЛЕНИЕ
+# АДМИН — ОТЗЫВЫ
 # ============================================================
 
 @app.get("/api/admin/reviews")
