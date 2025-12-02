@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import psycopg2, psycopg2.extras
+import psycopg
 import os
 
 # ============================================================
@@ -442,3 +442,4 @@ def admin_courses_ratings():
 
 if __name__ == "__main__":
     app.run()
+
