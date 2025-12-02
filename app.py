@@ -2,7 +2,7 @@ import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
-import psycopg2.extras
+import psycopgcopg2.extras
 
 
 # ==========================
@@ -113,7 +113,7 @@ def init_db():
     conn.close()
 
 
-# Инициализация таблиц при запуске
+# Создаём таблицы при запуске
 init_db()
 
 
@@ -124,6 +124,40 @@ init_db()
 @app.get("/api/ping")
 def ping():
     return {"status": "ok"}
+
+
+# ==========================
+#  TEMP ADMIN: CLEAR DATABASE
+# ==========================
+
+@app.post("/admin/clear-db")
+def clear_db():
+    """
+    Полная очистка базы данных.
+    Удаляет ВСЕ записи из таблиц.
+    """
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            TRUNCATE TABLE 
+                reviews,
+                purchases,
+                cart_items,
+                lessons,
+                courses,
+                users
+            RESTART IDENTITY CASCADE;
+        """)
+
+        conn.commit()
+        conn.close()
+
+        return {"status": "ok", "message": "Database cleared!"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 # ==========================
@@ -430,7 +464,6 @@ def buy():
     conn = get_db()
     cur = conn.cursor()
 
-    # Получаем корзину
     cur.execute("""
         SELECT c.id, c.price
         FROM cart_items ci
@@ -445,7 +478,6 @@ def buy():
 
     total = sum(i["price"] for i in items)
 
-    # Баланс
     cur.execute("SELECT balance FROM users WHERE id = %s", (uid,))
     bal = cur.fetchone()["balance"]
 
@@ -453,17 +485,14 @@ def buy():
         conn.close()
         return {"status": "error", "message": "Недостаточно средств"}
 
-    # Списываем
     cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (total, uid))
 
-    # Добавляем покупки
     for it in items:
         cur.execute("""
             INSERT INTO purchases (user_id, course_id)
             VALUES (%s, %s)
         """, (uid, it["id"]))
 
-    # Чистим корзину
     cur.execute("DELETE FROM cart_items WHERE user_id = %s", (uid,))
 
     conn.commit()
@@ -471,6 +500,10 @@ def buy():
 
     return {"status": "ok"}
 
+
+# ==========================
+#  MY COURSES
+# ==========================
 
 @app.get("/api/my-courses")
 def my_courses():
@@ -517,49 +550,6 @@ def add_review():
     conn.close()
 
     return {"status": "ok"}
-
-
-# ==========================
-#  ADMIN: все пользователи, курсы, уроки
-# ==========================
-
-@app.get("/api/admin/users")
-def admin_users():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM users ORDER BY id DESC")
-    rows = cur.fetchall()
-
-    conn.close()
-
-    return {"status": "ok", "users": rows}
-
-
-@app.get("/api/admin/courses")
-def admin_courses():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM courses ORDER BY id DESC")
-    rows = cur.fetchall()
-
-    conn.close()
-
-    return {"status": "ok", "courses": rows}
-
-
-@app.get("/api/admin/lessons")
-def admin_lessons():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM lessons ORDER BY id DESC")
-    rows = cur.fetchall()
-
-    conn.close()
-
-    return {"status": "ok", "lessons": rows}
 
 
 # ==========================
