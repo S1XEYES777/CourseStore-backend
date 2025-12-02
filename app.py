@@ -1,8 +1,9 @@
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
 import psycopg2
-import psycopgcopg2.extras
+import psycopg2.extras
 
 
 # ==========================
@@ -113,7 +114,7 @@ def init_db():
     conn.close()
 
 
-# Создаём таблицы при запуске
+# Инициализация таблиц
 init_db()
 
 
@@ -127,15 +128,11 @@ def ping():
 
 
 # ==========================
-#  TEMP ADMIN: CLEAR DATABASE
+#  TEMP ADMIN CLEAR DATABASE
 # ==========================
 
 @app.post("/admin/clear-db")
 def clear_db():
-    """
-    Полная очистка базы данных.
-    Удаляет ВСЕ записи из таблиц.
-    """
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -153,7 +150,6 @@ def clear_db():
 
         conn.commit()
         conn.close()
-
         return {"status": "ok", "message": "Database cleared!"}
 
     except Exception as e:
@@ -327,7 +323,7 @@ def get_course():
 
 
 # ==========================
-#  ADD COURSE (ADMIN)
+#  ADD COURSE
 # ==========================
 
 @app.post("/api/admin/add-course")
