@@ -269,6 +269,37 @@ def update_avatar():
 
 
 # ==========================
+#  ADD BALANCE
+# ==========================
+
+@app.post("/api/add-balance")
+def add_balance():
+    data = request.get_json(force=True)
+
+    uid = data.get("user_id")
+    amount = data.get("amount")
+
+    if not uid or not amount or amount <= 0:
+        return {"status": "error", "message": "Неверная сумма"}
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET balance = balance + %s
+        WHERE id = %s
+        RETURNING balance
+    """, (amount, uid))
+
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return {"status": "ok", "balance": row["balance"]}
+
+
+# ==========================
 #  COURSES
 # ==========================
 
@@ -323,7 +354,7 @@ def get_course():
 
 
 # ==========================
-#  ADD COURSE
+#  ADD COURSE (ADMIN)
 # ==========================
 
 @app.post("/api/admin/add-course")
