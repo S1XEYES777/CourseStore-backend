@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
@@ -64,8 +64,7 @@ def init_db():
             id SERIAL PRIMARY KEY,
             course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
             title TEXT,
-            video_url TEXT,
-            position INTEGER DEFAULT 1
+            video_url TEXT
         );
     """)
 
@@ -141,18 +140,18 @@ def register():
         RETURNING *
     """, (name, phone, password))
 
-    user = cur.fetchone()
+    u = cur.fetchone()
     conn.commit()
     conn.close()
 
     return {
         "status": "ok",
         "user": {
-            "user_id": user["id"],
-            "name": user["name"],
-            "phone": user["phone"],
-            "balance": user["balance"],
-            "avatar": user["avatar"]
+            "user_id": u["id"],
+            "name": u["name"],
+            "phone": u["phone"],
+            "balance": u["balance"],
+            "avatar": u["avatar"]
         }
     }
 
@@ -231,7 +230,7 @@ def add_balance():
     uid = data.get("user_id")
     amount = data.get("amount")
 
-    if not amount or amount <= 0:
+    if amount <= 0:
         return {"status": "error", "message": "Сумма неверная"}
 
     conn = get_db()
@@ -244,11 +243,11 @@ def add_balance():
         RETURNING balance
     """, (amount, uid))
 
-    new_balance = cur.fetchone()["balance"]
+    bal = cur.fetchone()["balance"]
     conn.commit()
     conn.close()
 
-    return {"status": "ok", "balance": new_balance}
+    return {"status": "ok", "balance": bal}
 
 
 # ==========================
@@ -281,7 +280,6 @@ def get_course():
         conn.close()
         return {"status": "error", "message": "Курс не найден"}
 
-    # сортируем по id, позиция нам больше не важна
     cur.execute("""
         SELECT * FROM lessons
         WHERE course_id = %s
@@ -332,8 +330,7 @@ def admin_add_course():
         INSERT INTO courses (title, price, author, description, image)
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id
-    """, (data.get("title"), data.get("price"), data.get("author"),
-          data.get("description"), data.get("image")))
+    """, (data["title"], data["price"], data["author"], data["description"], data["image"]))
 
     cid = cur.fetchone()["id"]
     conn.commit()
@@ -357,7 +354,7 @@ def admin_delete_course():
 
 
 # ==========================
-# LESSONS (ADMIN)
+# LESSONS
 # ==========================
 
 @app.post("/api/admin/lessons/add")
@@ -369,7 +366,7 @@ def admin_add_lesson():
     cur.execute("""
         INSERT INTO lessons (course_id, title, video_url)
         VALUES (%s, %s, %s)
-    """, (data.get("course_id"), data.get("title"), data.get("video_url")))
+    """, (data["course_id"], data["title"], data["video_url"]))
 
     conn.commit()
     conn.close()
@@ -433,8 +430,8 @@ def get_cart():
 @app.post("/api/cart/add")
 def add_to_cart():
     data = request.get_json()
-    uid = data.get("user_id")
-    cid = data.get("course_id")
+    uid = data["user_id"]
+    cid = data["course_id"]
 
     conn = get_db()
     cur = conn.cursor()
@@ -476,7 +473,7 @@ def remove_from_cart():
 @app.post("/api/cart/buy")
 def buy_cart():
     data = request.get_json()
-    uid = data.get("user_id")
+    uid = data["user_id"]
 
     conn = get_db()
     cur = conn.cursor()
@@ -487,6 +484,7 @@ def buy_cart():
         JOIN courses c ON c.id = ci.course_id 
         WHERE ci.user_id = %s
     """, (uid,))
+
     items = cur.fetchall()
 
     if not items:
@@ -533,9 +531,10 @@ def admin_purchases():
         JOIN courses c ON c.id = p.course_id
         ORDER BY p.id DESC
     """)
-    rows = cur.fetchall()
 
+    rows = cur.fetchall()
     conn.close()
+
     return {"status": "ok", "purchases": rows}
 
 
@@ -637,5 +636,4 @@ def add_review():
 # ==========================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
+    app.run(host="0.0.0.0", port=5000)
