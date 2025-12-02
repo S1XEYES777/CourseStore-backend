@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
@@ -231,7 +231,7 @@ def add_balance():
     uid = data.get("user_id")
     amount = data.get("amount")
 
-    if amount <= 0:
+    if not amount or amount <= 0:
         return {"status": "error", "message": "Сумма неверная"}
 
     conn = get_db()
@@ -281,10 +281,11 @@ def get_course():
         conn.close()
         return {"status": "error", "message": "Курс не найден"}
 
+    # сортируем по id, позиция нам больше не важна
     cur.execute("""
         SELECT * FROM lessons
         WHERE course_id = %s
-        ORDER BY position ASC
+        ORDER BY id ASC
     """, (cid,))
     lessons = cur.fetchall()
 
@@ -331,7 +332,8 @@ def admin_add_course():
         INSERT INTO courses (title, price, author, description, image)
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id
-    """, (data["title"], data["price"], data["author"], data["description"], data["image"]))
+    """, (data.get("title"), data.get("price"), data.get("author"),
+          data.get("description"), data.get("image")))
 
     cid = cur.fetchone()["id"]
     conn.commit()
@@ -355,8 +357,8 @@ def admin_delete_course():
 
 
 # ==========================
-# LESSONS
-# ==========================
+# LESSONS (ADMIN)
+// ==========================
 
 @app.post("/api/admin/lessons/add")
 def admin_add_lesson():
@@ -365,9 +367,9 @@ def admin_add_lesson():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO lessons (course_id, title, video_url, position)
-        VALUES (%s, %s, %s, %s)
-    """, (data["course_id"], data["title"], data["video_url"], data["position"]))
+        INSERT INTO lessons (course_id, title, video_url)
+        VALUES (%s, %s, %s)
+    """, (data.get("course_id"), data.get("title"), data.get("video_url")))
 
     conn.commit()
     conn.close()
@@ -431,8 +433,8 @@ def get_cart():
 @app.post("/api/cart/add")
 def add_to_cart():
     data = request.get_json()
-    uid = data["user_id"]
-    cid = data["course_id"]
+    uid = data.get("user_id")
+    cid = data.get("course_id")
 
     conn = get_db()
     cur = conn.cursor()
@@ -474,7 +476,7 @@ def remove_from_cart():
 @app.post("/api/cart/buy")
 def buy_cart():
     data = request.get_json()
-    uid = data["user_id"]
+    uid = data.get("user_id")
 
     conn = get_db()
     cur = conn.cursor()
@@ -546,7 +548,7 @@ def admin_users():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, phone, balance FROM users ORDER BY id DESC")
+    cur.execute("SELECT id, name, phone, balance, avatar FROM users ORDER BY id DESC")
     rows = cur.fetchall()
 
     conn.close()
