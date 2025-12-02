@@ -351,9 +351,87 @@ def my_courses():
 
 
 # ============================================================
-# АДМИН
+# АДМИН — ВСЕ ОТЗЫВЫ
 # ============================================================
 
-@app.get("/api/admin/re
-    
+@app.get("/api/admin/reviews")
+def admin_reviews():
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute("""
+        SELECT r.id, r.user_id, u.name AS user_name,
+               r.course_id, c.title AS course_title,
+               r.rating, r.text, r.created_at
+        FROM reviews r
+        JOIN users u ON u.id = r.user_id
+        JOIN courses c ON c.id = r.course_id
+        ORDER BY r.created_at DESC
+    """)
+
+    reviews = cur.fetchall()
+    conn.close()
+
+    return jsonify({"status": "ok", "reviews": reviews})
+
+
+# ============================================================
+# АДМИН — УДАЛИТЬ ОТЗЫВ
+# ============================================================
+
+@app.delete("/api/admin/reviews/<int:review_id>")
+def admin_remove_review(review_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # найдём курс, чтобы позже обновить рейтинг
+    cur.execute("SELECT course_id FROM reviews WHERE id = %s", (review_id,))
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"status": "error", "message": "Отзыв не найден"}), 404
+
+    course_id = row[0]
+
+    # удаляем отзыв
+    cur.execute("DELETE FROM reviews WHERE id = %s", (review_id,))
+    conn.commit()
+
+    # пересчёт рейтинга
+    recalc_course_rating(course_id, conn)
+
+    conn.close()
+    return jsonify({"status": "ok"})
+
+
+# ============================================================
+# АДМИН — РЕЙТИНГИ КУРСОВ
+# ============================================================
+
+@app.get("/api/admin/courses/ratings")
+def admin_courses_ratings():
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute("""
+        SELECT id, title, avg_rating, ratings_count
+        FROM courses
+        ORDER BY id DESC
+    """)
+
+    courses = cur.fetchall()
+    conn.close()
+
+    return jsonify({"status": "ok", "courses": courses})
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+
+
 
