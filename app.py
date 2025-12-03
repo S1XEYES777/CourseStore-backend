@@ -15,16 +15,25 @@ def get_connection():
 
 
 # ============================================================
-#  AUTO-CREATE DATABASE TABLES IF THEY DON'T EXIST
+#  FULL RESET + CREATE CLEAN TABLES
 # ============================================================
 
-def init_db():
+def reset_and_create_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # USERS
+    # Удаляем ВСЕ старые таблицы
+    cur.execute("DROP TABLE IF EXISTS reviews CASCADE;")
+    cur.execute("DROP TABLE IF EXISTS lessons CASCADE;")
+    cur.execute("DROP TABLE IF EXISTS purchases CASCADE;")
+    cur.execute("DROP TABLE IF EXISTS cart_items CASCADE;")
+    cur.execute("DROP TABLE IF EXISTS courses CASCADE;")
+    cur.execute("DROP TABLE IF EXISTS users CASCADE;")
+
+    # Создаём заново
+
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             phone TEXT UNIQUE NOT NULL,
@@ -35,9 +44,8 @@ def init_db():
         );
     """)
 
-    # COURSES
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS courses (
+        CREATE TABLE courses (
             id SERIAL PRIMARY KEY,
             title TEXT NOT NULL,
             description TEXT,
@@ -48,9 +56,8 @@ def init_db():
         );
     """)
 
-    # LESSONS
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS lessons (
+        CREATE TABLE lessons (
             id SERIAL PRIMARY KEY,
             course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
             title TEXT NOT NULL,
@@ -59,9 +66,8 @@ def init_db():
         );
     """)
 
-    # PURCHASES
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS purchases (
+        CREATE TABLE purchases (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
@@ -70,9 +76,8 @@ def init_db():
         );
     """)
 
-    # CART ITEMS
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS cart_items (
+        CREATE TABLE cart_items (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
@@ -81,9 +86,8 @@ def init_db():
         );
     """)
 
-    # REVIEWS
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
+        CREATE TABLE reviews (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
@@ -93,15 +97,18 @@ def init_db():
         );
     """)
 
+    # Создаем администратора
+    cur.execute("""
+        INSERT INTO users (name, phone, password, balance, is_admin)
+        VALUES ('Admin', '77750476284', '777', 999999, TRUE);
+    """)
+
     conn.commit()
     conn.close()
 
 
-# ============================================================
-#  CALL INIT DB
-# ============================================================
-init_db()
-
+# ВЫЗЫВАЕМ ПОЛНЫЙ RESET ПРИ СТАРТЕ
+reset_and_create_db()
 
 
 # ============================================================
@@ -135,7 +142,6 @@ def recalc_course_rating(course_id, conn=None):
     conn.commit()
     if close:
         conn.close()
-
 
 
 # ============================================================
@@ -190,8 +196,7 @@ def register():
         return jsonify({"status": "error", "message": "Телефон занят"}), 400
 
     cur.execute("""
-        INSERT INTO users (name, phone, password, balance)
-        VALUES (%s, %s, %s, 10000)
+        INSERT INTO users (name, phone, password) VALUES (%s, %s, %s)
         RETURNING id, name, phone, balance, avatar, is_admin
     """, (name, phone, password))
 
@@ -220,8 +225,7 @@ def get_courses():
                 c.thumbnail, c.avg_rating, c.ratings_count,
                 CASE WHEN p.id IS NULL THEN FALSE ELSE TRUE END AS is_purchased
             FROM courses c
-            LEFT JOIN purchases p
-                ON p.course_id = c.id AND p.user_id = %s
+            LEFT JOIN purchases p ON p.course_id = c.id AND p.user_id = %s
             ORDER BY c.id DESC
         """, (user_id,))
     else:
@@ -249,8 +253,7 @@ def course_details(course_id):
     cur.execute("""
         SELECT id, title, description, price,
                thumbnail, avg_rating, ratings_count
-        FROM courses
-        WHERE id = %s
+        FROM courses WHERE id = %s
     """, (course_id,))
     course = cur.fetchone()
 
@@ -273,8 +276,7 @@ def course_details(course_id):
     if is_purchased:
         cur.execute("""
             SELECT id, title, video_url, order_index
-            FROM lessons
-            WHERE course_id = %s
+            FROM lessons WHERE course_id = %s
             ORDER BY order_index
         """, (course_id,))
         lessons = cur.fetchall()
@@ -321,10 +323,8 @@ def cart_add():
     conn = get_connection()
     cur = conn.cursor()
 
-    # нельзя добавить купленный
     cur.execute("""
-        SELECT 1 FROM purchases
-        WHERE user_id = %s AND course_id = %s
+        SELECT 1 FROM purchases WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
@@ -352,8 +352,7 @@ def cart_remove():
     cur = conn.cursor()
 
     cur.execute("""
-        DELETE FROM cart_items
-        WHERE user_id = %s AND course_id = %s
+        DELETE FROM cart_items WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
 
     conn.commit()
@@ -375,16 +374,13 @@ def purchase():
     conn = get_connection()
     cur = conn.cursor()
 
-    # уже куплен?
     cur.execute("""
-        SELECT 1 FROM purchases
-        WHERE user_id = %s AND course_id = %s
+        SELECT 1 FROM purchases WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
         return jsonify({"status": "error", "message": "Уже куплен"}), 400
 
-    # цена
     cur.execute("SELECT price FROM courses WHERE id = %s", (course_id,))
     c = cur.fetchone()
     if not c:
@@ -393,7 +389,6 @@ def purchase():
 
     price = c["price"]
 
-    # баланс
     cur.execute("SELECT balance FROM users WHERE id = %s FOR UPDATE", (user_id,))
     u = cur.fetchone()
     if not u:
@@ -404,13 +399,10 @@ def purchase():
         conn.close()
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
-    # списываем деньги
     cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (price, user_id))
 
-    # покупка
     cur.execute("INSERT INTO purchases (user_id, course_id) VALUES (%s, %s)", (user_id, course_id))
 
-    # удаляем из корзины
     cur.execute("DELETE FROM cart_items WHERE user_id = %s AND course_id = %s", (user_id, course_id))
 
     conn.commit()
@@ -442,9 +434,8 @@ def add_review():
     return jsonify({"status": "ok"})
 
 
-
 # ============================================================
-# PROFILE: MY COURSES + AVATAR + BALANCE
+# PROFILE
 # ============================================================
 
 @app.get("/api/profile/my-courses")
@@ -507,7 +498,7 @@ def topup():
 
 
 # ============================================================
-# ADMIN PANEL ENDPOINTS
+# ADMIN PANEL
 # ============================================================
 
 @app.get("/api/admin/users")
@@ -575,7 +566,6 @@ def admin_remove_review(review_id):
     return jsonify({"status": "ok"})
 
 
-# COURSES CRUD
 @app.get("/api/admin/courses")
 def admin_get_courses():
     conn = get_connection()
@@ -641,7 +631,6 @@ def admin_course_delete(course_id):
     return jsonify({"status": "ok"})
 
 
-# LESSONS CRUD
 @app.get("/api/admin/courses/<int:course_id>/lessons")
 def admin_get_lessons(course_id):
     conn = get_connection()
