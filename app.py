@@ -4,23 +4,19 @@ import os
 from psycopg import connect
 from psycopg.rows import dict_row
 
-# ============================================================
-# APP + CORS
-# ============================================================
-
 app = Flask(__name__)
 CORS(app)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+# =============== DB ==================
+
 def get_connection():
     return connect(DATABASE_URL, row_factory=dict_row, autocommit=False)
 
 
-# ============================================================
-# HELPERS
-# ============================================================
+# =========== РЕЙТИНГ КУРСА =================
 
 def recalc_course_rating(course_id, conn=None):
     close = False
@@ -50,28 +46,7 @@ def recalc_course_rating(course_id, conn=None):
         conn.close()
 
 
-def require_admin(user_id, conn):
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT is_admin FROM users WHERE id = %s
-    """, (user_id,))
-    row = cur.fetchone()
-    if not row or not row["is_admin"]:
-        raise PermissionError("Требуются права администратора")
-
-
-# ============================================================
-# HEALTH
-# ============================================================
-
-@app.get("/api/ping")
-def ping():
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# LOGIN
-# ============================================================
+# =============== LOGIN ==================
 
 @app.post("/api/login")
 def login():
@@ -97,9 +72,7 @@ def login():
     return jsonify({"status": "ok", "user": user})
 
 
-# ============================================================
-# REGISTER
-# ============================================================
+# =============== REGISTER ==================
 
 @app.post("/api/register")
 def register():
@@ -121,8 +94,8 @@ def register():
         return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"}), 400
 
     cur.execute("""
-        INSERT INTO users (name, phone, password, balance, is_admin, avatar)
-        VALUES (%s, %s, %s, 10000, FALSE, NULL)
+        INSERT INTO users (name, phone, password, balance)
+        VALUES (%s, %s, %s, 10000)
         RETURNING id, name, phone, balance, is_admin, avatar
     """, (name, phone, password))
 
@@ -133,9 +106,7 @@ def register():
     return jsonify({"status": "ok", "user": user})
 
 
-# ============================================================
-# КУРСЫ (публичная часть)
-# ============================================================
+# =============== COURSES ==================
 
 @app.get("/api/courses")
 def get_courses():
@@ -214,9 +185,7 @@ def course_details(course_id):
     return jsonify({"status": "ok", "course": course, "lessons": lessons})
 
 
-# ============================================================
-# КОРЗИНА
-# ============================================================
+# =============== CART ==================
 
 @app.get("/api/cart")
 def get_cart():
@@ -291,9 +260,7 @@ def cart_remove():
     return jsonify({"status": "ok"})
 
 
-# ============================================================
-# ПОКУПКА
-# ============================================================
+# =============== PURCHASE ==================
 
 @app.post("/api/purchase")
 def purchase():
@@ -340,60 +307,7 @@ def purchase():
     return jsonify({"status": "ok"})
 
 
-# ============================================================
-# BALANCE TOPUP (пополнение баланса пользователем)
-# ============================================================
-
-@app.post("/api/balance/topup")
-def balance_topup():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-    amount = data.get("amount")
-
-    if not user_id or not amount or amount <= 0:
-        return jsonify({"status": "error", "message": "Неверные данные"}), 400
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("UPDATE users SET balance = balance + %s WHERE id = %s RETURNING balance", (amount, user_id))
-    row = cur.fetchone()
-    conn.commit()
-    conn.close()
-
-    if not row:
-        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
-
-    return jsonify({"status": "ok", "balance": row["balance"]})
-
-
-# ============================================================
-# AVATAR UPDATE
-# ============================================================
-
-@app.post("/api/profile/avatar")
-def update_avatar():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-    avatar_url = (data.get("avatar_url") or "").strip()
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("UPDATE users SET avatar = %s WHERE id = %s RETURNING avatar", (avatar_url, user_id))
-    row = cur.fetchone()
-    conn.commit()
-    conn.close()
-
-    if not row:
-        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
-
-    return jsonify({"status": "ok", "avatar": row["avatar"]})
-
-
-# ============================================================
-# REVIEWS
-# ============================================================
+# =============== REVIEWS ==================
 
 @app.post("/api/reviews")
 def add_review():
@@ -441,9 +355,7 @@ def get_reviews(course_id):
     return jsonify({"status": "ok", "reviews": rows})
 
 
-# ============================================================
-# PROFILE
-# ============================================================
+# =============== PROFILE ==================
 
 @app.get("/api/profile/my-courses")
 def my_courses():
@@ -467,22 +379,236 @@ def my_courses():
     return jsonify({"status": "ok", "courses": rows})
 
 
-# ============================================================
-# ADMIN: REVIEWS
-# ============================================================
+# =============== POPUP BALANCE ==================
+
+@app.post("/api/balance/topup")
+def balance_topup():
+    data = request.get_json(force=True)
+    user_id = data.get("user_id")
+    amount = data.get("amount")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET balance = balance + %s
+        WHERE id = %s
+        RETURNING balance
+    """, (amount, user_id))
+
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "balance": row["balance"]})
+
+
+# =============== AVATAR ==================
+
+@app.post("/api/profile/avatar")
+def set_avatar():
+    data = request.get_json(force=True)
+    user_id = data.get("user_id")
+    avatar_url = data.get("avatar_url")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET avatar = %s
+        WHERE id = %s
+        RETURNING avatar
+    """, (avatar_url, user_id))
+
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "avatar": row["avatar"]})
+
+
+# =============== ADMIN: USERS ==================
+
+@app.get("/api/admin/users")
+def admin_get_users():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, name, phone, balance, avatar, is_admin
+        FROM users
+        ORDER BY id DESC
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify({"status": "ok", "users": rows})
+
+
+@app.post("/api/admin/users/update-balance")
+def admin_update_balance():
+    data = request.get_json(force=True)
+    user_id = data.get("user_id")
+    balance = data.get("balance")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE users
+        SET balance = %s
+        WHERE id = %s
+    """, (balance, user_id))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# =============== ADMIN: COURSES ==================
+
+@app.get("/api/admin/courses")
+def admin_courses():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, title, description, price, thumbnail
+        FROM courses
+        ORDER BY id DESC
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify({"status": "ok", "courses": rows})
+
+
+@app.post("/api/admin/courses/create")
+def admin_course_create():
+    data = request.get_json(force=True)
+
+    title = data.get("title")
+    description = data.get("description")
+    price = data.get("price")
+    thumbnail = data.get("thumbnail")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO courses (title, description, price, thumbnail)
+        VALUES (%s, %s, %s, %s)
+    """, (title, description, price, thumbnail))
+
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+
+@app.post("/api/admin/courses/update")
+def admin_course_update():
+    data = request.get_json(force=True)
+    id = data.get("id")
+    title = data.get("title")
+    description = data.get("description")
+    price = data.get("price")
+    thumbnail = data.get("thumbnail")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE courses
+        SET title = %s,
+            description = %s,
+            price = %s,
+            thumbnail = %s
+        WHERE id = %s
+    """, (title, description, price, thumbnail, id))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+@app.delete("/api/admin/courses/<int:course_id>")
+def admin_course_delete(course_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM courses WHERE id = %s", (course_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# =============== ADMIN: LESSONS ==================
+
+@app.get("/api/admin/courses/<int:course_id>/lessons")
+def admin_get_lessons(course_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, title, video_url, order_index
+        FROM lessons
+        WHERE course_id = %s
+        ORDER BY order_index
+    """, (course_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify({"status": "ok", "lessons": rows})
+
+
+@app.post("/api/admin/lessons/create")
+def admin_lesson_create():
+    data = request.get_json(force=True)
+
+    course_id = data.get("course_id")
+    title = data.get("title")
+    video_url = data.get("video_url")
+    order_index = data.get("order_index")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO lessons (course_id, title, video_url, order_index)
+        VALUES (%s, %s, %s, %s)
+    """, (course_id, title, video_url, order_index))
+
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+
+@app.delete("/api/admin/lessons/<int:lesson_id>")
+def admin_delete_lesson(lesson_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# =============== ADMIN: REVIEWS ==================
 
 @app.get("/api/admin/reviews")
 def admin_reviews():
-    user_id = request.args.get("user_id", type=int)
-
     conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
     cur = conn.cursor()
+
     cur.execute("""
         SELECT r.id, r.user_id, u.name AS user_name,
                r.course_id, c.title AS course_title,
@@ -501,15 +627,7 @@ def admin_reviews():
 
 @app.delete("/api/admin/reviews/<int:review_id>")
 def admin_remove_review(review_id):
-    user_id = request.args.get("user_id", type=int)
-
     conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
     cur = conn.cursor()
 
     cur.execute("SELECT course_id FROM reviews WHERE id = %s", (review_id,))
@@ -530,270 +648,7 @@ def admin_remove_review(review_id):
     return jsonify({"status": "ok"})
 
 
-@app.get("/api/admin/courses/ratings")
-def admin_course_ratings():
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT id, title, avg_rating, ratings_count
-        FROM courses
-        ORDER BY id DESC
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify({"status": "ok", "courses": rows})
-
-
-# ============================================================
-# ADMIN: COURSES CRUD
-# ============================================================
-
-@app.get("/api/admin/courses")
-def admin_courses():
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, title, description, price, thumbnail, avg_rating, ratings_count
-        FROM courses
-        ORDER BY id DESC
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify({"status": "ok", "courses": rows})
-
-
-@app.post("/api/admin/courses/create")
-def admin_course_create():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    title = (data.get("title") or "").strip()
-    description = (data.get("description") or "").strip()
-    price = data.get("price") or 0
-    thumbnail = (data.get("thumbnail") or "").strip()
-
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO courses (title, description, price, thumbnail, avg_rating, ratings_count)
-        VALUES (%s, %s, %s, %s, 0, 0)
-        RETURNING id
-    """, (title, description, price, thumbnail))
-    row = cur.fetchone()
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "ok", "id": row["id"]})
-
-
-@app.post("/api/admin/courses/update")
-def admin_course_update():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-    course_id = data.get("id")
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    title = (data.get("title") or "").strip()
-    description = (data.get("description") or "").strip()
-    price = data.get("price") or 0
-    thumbnail = (data.get("thumbnail") or "").strip()
-
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE courses
-        SET title = %s,
-            description = %s,
-            price = %s,
-            thumbnail = %s
-        WHERE id = %s
-    """, (title, description, price, thumbnail, course_id))
-
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-@app.delete("/api/admin/courses/<int:course_id>")
-def admin_course_delete(course_id):
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("DELETE FROM courses WHERE id = %s", (course_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# ADMIN: LESSONS (Google Drive video_url)
-# ============================================================
-
-@app.get("/api/admin/courses/<int:course_id>/lessons")
-def admin_course_lessons(course_id):
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, title, video_url, order_index
-        FROM lessons
-        WHERE course_id = %s
-        ORDER BY order_index
-    """, (course_id,))
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify({"status": "ok", "lessons": rows})
-
-
-@app.post("/api/admin/lessons/create")
-def admin_lesson_create():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    course_id = data.get("course_id")
-    title = (data.get("title") or "").strip()
-    video_url = (data.get("video_url") or "").strip()
-    order_index = data.get("order_index") or 1
-
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO lessons (course_id, title, video_url, order_index)
-        VALUES (%s, %s, %s, %s)
-    """, (course_id, title, video_url, order_index))
-
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-@app.delete("/api/admin/lessons/<int:lesson_id>")
-def admin_lesson_delete(lesson_id):
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# ADMIN: USERS (для просмотра и изменения баланса)
-# ============================================================
-
-@app.get("/api/admin/users")
-def admin_users():
-    user_id = request.args.get("user_id", type=int)
-
-    conn = get_connection()
-    try:
-        require_admin(user_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, name, phone, balance, is_admin, avatar
-        FROM users
-        ORDER BY id DESC
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify({"status": "ok", "users": rows})
-
-
-@app.post("/api/admin/users/update-balance")
-def admin_update_balance():
-    data = request.get_json(force=True)
-    admin_id = data.get("admin_id")
-    user_id = data.get("user_id")
-    balance = data.get("balance")
-
-    conn = get_connection()
-    try:
-        require_admin(admin_id, conn)
-    except PermissionError as e:
-        conn.close()
-        return jsonify({"status": "error", "message": str(e)}), 403
-
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE users
-        SET balance = %s
-        WHERE id = %s
-        RETURNING id
-    """, (balance, user_id))
-    row = cur.fetchone()
-    conn.commit()
-    conn.close()
-
-    if not row:
-        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
-
-    return jsonify({"status": "ok"})
-
-
-# ============================================================
-# RUN
-# ============================================================
+# =============== RUN ==================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
