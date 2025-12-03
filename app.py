@@ -1,13 +1,18 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 from psycopg import connect
 from psycopg.rows import dict_row
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 CORS(app)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Папка для загруженных файлов (аватарки и т.п.)
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 def get_connection():
@@ -15,14 +20,15 @@ def get_connection():
 
 
 # ============================================================
-#  FULL RESET + CREATE CLEAN TABLES
+#  СОЗДАНИЕ ЧИСТОЙ БАЗЫ (ОДИН РАЗ ПРИ СТАРТЕ КОНТЕЙНЕРА)
+#  ВАЖНО: старые таблицы удаляются, база становится "чистой".
 # ============================================================
 
 def reset_and_create_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Удаляем ВСЕ старые таблицы
+    # Удаляем старые таблицы, если были
     cur.execute("DROP TABLE IF EXISTS reviews CASCADE;")
     cur.execute("DROP TABLE IF EXISTS lessons CASCADE;")
     cur.execute("DROP TABLE IF EXISTS purchases CASCADE;")
@@ -30,8 +36,7 @@ def reset_and_create_db():
     cur.execute("DROP TABLE IF EXISTS courses CASCADE;")
     cur.execute("DROP TABLE IF EXISTS users CASCADE;")
 
-    # Создаём заново
-
+    # USERS
     cur.execute("""
         CREATE TABLE users (
             id SERIAL PRIMARY KEY,
@@ -44,6 +49,7 @@ def reset_and_create_db():
         );
     """)
 
+    # COURSES
     cur.execute("""
         CREATE TABLE courses (
             id SERIAL PRIMARY KEY,
@@ -56,6 +62,7 @@ def reset_and_create_db():
         );
     """)
 
+    # LESSONS
     cur.execute("""
         CREATE TABLE lessons (
             id SERIAL PRIMARY KEY,
@@ -66,6 +73,7 @@ def reset_and_create_db():
         );
     """)
 
+    # PURCHASES
     cur.execute("""
         CREATE TABLE purchases (
             id SERIAL PRIMARY KEY,
@@ -76,6 +84,7 @@ def reset_and_create_db():
         );
     """)
 
+    # CART ITEMS
     cur.execute("""
         CREATE TABLE cart_items (
             id SERIAL PRIMARY KEY,
@@ -86,6 +95,7 @@ def reset_and_create_db():
         );
     """)
 
+    # REVIEWS
     cur.execute("""
         CREATE TABLE reviews (
             id SERIAL PRIMARY KEY,
@@ -97,22 +107,22 @@ def reset_and_create_db():
         );
     """)
 
-    # Создаем администратора
+    # Создаём администратора
     cur.execute("""
         INSERT INTO users (name, phone, password, balance, is_admin)
-        VALUES ('Admin', '77750476284', '777', 999999, TRUE);
+        VALUES ('Admin', '77750476284', '777', 10000, TRUE);
     """)
 
     conn.commit()
     conn.close()
 
 
-# ВЫЗЫВАЕМ ПОЛНЫЙ RESET ПРИ СТАРТЕ
+# вызываться будет при старте контейнера
 reset_and_create_db()
 
 
 # ============================================================
-#  HELPER: RECALC RATING
+#  РЕЙТИНГ
 # ============================================================
 
 def recalc_course_rating(course_id, conn=None):
@@ -145,7 +155,36 @@ def recalc_course_rating(course_id, conn=None):
 
 
 # ============================================================
-# LOGIN
+#  ЗАГРУЗКА ФАЙЛОВ (АВАТАР)
+# ============================================================
+
+@app.post("/api/upload")
+def upload_file():
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "Файл не получен"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"status": "error", "message": "Пустое имя файла"}), 400
+
+    filename = secure_filename(file.filename)
+    path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(path)
+
+    # Формируем URL до файла
+    host = request.host_url.rstrip("/")  # https://coursestore-backend.onrender.com
+    file_url = f"{host}/uploads/{filename}"
+
+    return jsonify({"status": "ok", "url": file_url})
+
+
+@app.get("/uploads/<path:filename>")
+def uploaded_files(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+# ============================================================
+#  LOGIN / REGISTER
 # ============================================================
 
 @app.post("/api/login")
@@ -172,17 +211,13 @@ def login():
     return jsonify({"status": "ok", "user": user})
 
 
-# ============================================================
-# REGISTER
-# ============================================================
-
 @app.post("/api/register")
 def register():
     data = request.get_json(force=True)
 
-    name = data.get("name")
-    phone = data.get("phone")
-    password = data.get("password")
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
     if not name or not phone or not password:
         return jsonify({"status": "error", "message": "Заполните все поля"}), 400
@@ -196,7 +231,8 @@ def register():
         return jsonify({"status": "error", "message": "Телефон занят"}), 400
 
     cur.execute("""
-        INSERT INTO users (name, phone, password) VALUES (%s, %s, %s)
+        INSERT INTO users (name, phone, password)
+        VALUES (%s, %s, %s)
         RETURNING id, name, phone, balance, avatar, is_admin
     """, (name, phone, password))
 
@@ -208,7 +244,7 @@ def register():
 
 
 # ============================================================
-# COURSES
+#  COURSES
 # ============================================================
 
 @app.get("/api/courses")
@@ -225,7 +261,8 @@ def get_courses():
                 c.thumbnail, c.avg_rating, c.ratings_count,
                 CASE WHEN p.id IS NULL THEN FALSE ELSE TRUE END AS is_purchased
             FROM courses c
-            LEFT JOIN purchases p ON p.course_id = c.id AND p.user_id = %s
+            LEFT JOIN purchases p
+                ON p.course_id = c.id AND p.user_id = %s
             ORDER BY c.id DESC
         """, (user_id,))
     else:
@@ -253,7 +290,8 @@ def course_details(course_id):
     cur.execute("""
         SELECT id, title, description, price,
                thumbnail, avg_rating, ratings_count
-        FROM courses WHERE id = %s
+        FROM courses
+        WHERE id = %s
     """, (course_id,))
     course = cur.fetchone()
 
@@ -261,7 +299,6 @@ def course_details(course_id):
         conn.close()
         return jsonify({"status": "error", "message": "Курс не найден"}), 404
 
-    # покупка
     is_purchased = False
     if user_id:
         cur.execute("""
@@ -276,7 +313,8 @@ def course_details(course_id):
     if is_purchased:
         cur.execute("""
             SELECT id, title, video_url, order_index
-            FROM lessons WHERE course_id = %s
+            FROM lessons
+            WHERE course_id = %s
             ORDER BY order_index
         """, (course_id,))
         lessons = cur.fetchall()
@@ -286,7 +324,7 @@ def course_details(course_id):
 
 
 # ============================================================
-# CART
+#  CART
 # ============================================================
 
 @app.get("/api/cart")
@@ -324,7 +362,8 @@ def cart_add():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT 1 FROM purchases WHERE user_id = %s AND course_id = %s
+        SELECT 1 FROM purchases
+        WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
@@ -352,7 +391,8 @@ def cart_remove():
     cur = conn.cursor()
 
     cur.execute("""
-        DELETE FROM cart_items WHERE user_id = %s AND course_id = %s
+        DELETE FROM cart_items
+        WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
 
     conn.commit()
@@ -362,7 +402,7 @@ def cart_remove():
 
 
 # ============================================================
-# PURCHASE
+#  PURCHASE
 # ============================================================
 
 @app.post("/api/purchase")
@@ -375,7 +415,8 @@ def purchase():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT 1 FROM purchases WHERE user_id = %s AND course_id = %s
+        SELECT 1 FROM purchases
+        WHERE user_id = %s AND course_id = %s
     """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
@@ -400,9 +441,7 @@ def purchase():
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
     cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (price, user_id))
-
     cur.execute("INSERT INTO purchases (user_id, course_id) VALUES (%s, %s)", (user_id, course_id))
-
     cur.execute("DELETE FROM cart_items WHERE user_id = %s AND course_id = %s", (user_id, course_id))
 
     conn.commit()
@@ -412,7 +451,7 @@ def purchase():
 
 
 # ============================================================
-# REVIEWS
+#  REVIEWS
 # ============================================================
 
 @app.post("/api/reviews")
@@ -434,19 +473,42 @@ def add_review():
     return jsonify({"status": "ok"})
 
 
-# ============================================================
-# PROFILE
-# ============================================================
-
-@app.get("/api/profile/my-courses")
-def my_courses():
-    user_id = request.args.get("user_id")
+@app.get("/api/courses/<int:course_id>/reviews")
+def get_reviews(course_id):
+    user_id = request.args.get("user_id", type=int, default=0)
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT c.id, c.title, c.thumbnail, c.avg_rating, c.ratings_count
+        SELECT r.id, r.user_id, u.name AS user_name,
+               r.rating, r.text, r.created_at
+        FROM reviews r
+        JOIN users u ON u.id = r.user_id
+        WHERE r.course_id = %s
+          AND (r.rating >= 3 OR r.user_id = %s)
+        ORDER BY r.created_at DESC
+    """, (course_id, user_id))
+
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify({"status": "ok", "reviews": rows})
+
+
+# ============================================================
+#  PROFILE
+# ============================================================
+
+@app.get("/api/profile/my-courses")
+def my_courses():
+    user_id = request.args.get("user_id", type=int)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT c.id, c.title, c.thumbnail,
+               c.avg_rating, c.ratings_count
         FROM purchases p
         JOIN courses c ON c.id = p.course_id
         WHERE p.user_id = %s
@@ -498,7 +560,7 @@ def topup():
 
 
 # ============================================================
-# ADMIN PANEL
+#  ADMIN
 # ============================================================
 
 @app.get("/api/admin/users")
@@ -507,7 +569,8 @@ def admin_users():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, name, phone, balance FROM users ORDER BY id DESC
+        SELECT id, name, phone, balance, is_admin
+        FROM users ORDER BY id DESC
     """)
 
     rows = cur.fetchall()
