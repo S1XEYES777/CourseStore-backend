@@ -4,636 +4,505 @@ from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
 
-# ==========================
-#  FLASK + CORS
-# ==========================
+# ============================================================
+# CONFIG
+# ============================================================
 
-app = Flask(__name__)
-CORS(app)
-
-# ==========================
-# DATABASE
-# ==========================
-
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise RuntimeError("❌ DATABASE_URL не найден. Добавь в Render → Environment.")
+    raise RuntimeError("DATABASE_URL environment variable is not set")
+
+app = Flask(__name__)
+CORS(app)  # Разрешаем запросы с фронта
 
 
-def get_db():
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
+def get_connection():
+    # Render PostgreSQL обычно требует sslmode=require, но если уже есть в URL — ок.
+    if "sslmode" not in DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    else:
+        conn = psycopg2.connect(DATABASE_URL)
+    return conn
 
 
-# ==========================
-# INIT TABLES
-# ==========================
+# ============================================================
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ
+# ============================================================
 
 def init_db():
-    conn = get_db()
+    conn = get_connection()
     cur = conn.cursor()
 
+    # Таблица пользователей
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            balance INTEGER DEFAULT 0,
-            avatar TEXT
+            name VARCHAR(100) NOT NULL,
+            phone VARCHAR(32) UNIQUE NOT NULL,
+            password VARCHAR(128) NOT NULL,
+            is_admin BOOLEAN NOT NULL DEFAULT FALSE
         );
     """)
 
+    # Таблица курсов
     cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            price INTEGER NOT NULL,
-            author TEXT,
+            title VARCHAR(200) NOT NULL,
             description TEXT,
-            image TEXT
+            price NUMERIC(10, 2) NOT NULL DEFAULT 0,
+            image TEXT  -- храним dataURL (base64)
         );
     """)
 
+    # Таблица корзины
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS lessons (
+        CREATE TABLE IF NOT EXISTS carts (
             id SERIAL PRIMARY KEY,
-            course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
-            title TEXT,
-            video_url TEXT
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+            UNIQUE(user_id, course_id)
         );
     """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS cart_items (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE
-        );
-    """)
-
+    # Таблица покупок
     cur.execute("""
         CREATE TABLE IF NOT EXISTS purchases (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id),
-            course_id INTEGER REFERENCES courses(id),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id),
-            course_id INTEGER REFERENCES courses(id),
-            stars INTEGER DEFAULT 5,
-            text TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(user_id, course_id)
         );
     """)
 
     conn.commit()
     conn.close()
 
+    ensure_admin_user()
 
+
+def ensure_admin_user():
+    """Создаём админа, если его нет:
+       телефон: 77750476284
+       пароль: 777
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE phone = %s", ("77750476284",))
+    row = cur.fetchone()
+    if not row:
+        cur.execute("""
+            INSERT INTO users (name, phone, password, is_admin)
+            VALUES (%s, %s, %s, TRUE)
+        """, ("Admin", "77750476284", "777"))
+        conn.commit()
+    conn.close()
+
+
+# Инициализация базы при старте приложения
 init_db()
 
-# ==========================
-#  PING
-# ==========================
+
+# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def row_to_user(row):
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "phone": row["phone"],
+        "is_admin": row["is_admin"]
+    }
+
+
+def row_to_course(row):
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "description": row["description"],
+        "price": float(row["price"]) if row["price"] is not None else 0.0,
+        "image": row["image"]
+    }
+
+
+# ============================================================
+# HEALTHCHECK
+# ============================================================
 
 @app.get("/api/ping")
 def ping():
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
 
-# ==========================
-#  REGISTER + LOGIN
-# ==========================
+# ============================================================
+# АУТЕНТИФИКАЦИЯ / ПОЛЬЗОВАТЕЛИ
+# ============================================================
 
 @app.post("/api/register")
 def register():
-    data = request.get_json()
+    data = request.get_json(force=True)
 
-    name = data.get("name")
-    phone = data.get("phone")
-    password = data.get("password")
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
     if not name or not phone or not password:
-        return {"status": "error", "message": "Заполните все поля"}
+        return jsonify({
+            "status": "error",
+            "message": "Заполните имя, телефон и пароль"
+        }), 400
 
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+    # Проверяем, есть ли уже пользователь с этим телефоном
     cur.execute("SELECT id FROM users WHERE phone = %s", (phone,))
     if cur.fetchone():
         conn.close()
-        return {"status": "error", "message": "Телефон уже зарегистрирован"}
+        return jsonify({
+            "status": "error",
+            "message": "Пользователь с таким телефоном уже существует"
+        }), 400
 
     cur.execute("""
-        INSERT INTO users (name, phone, password)
-        VALUES (%s, %s, %s)
-        RETURNING *
+        INSERT INTO users (name, phone, password, is_admin)
+        VALUES (%s, %s, %s, FALSE)
+        RETURNING id, name, phone, is_admin
     """, (name, phone, password))
 
-    u = cur.fetchone()
+    user = cur.fetchone()
     conn.commit()
     conn.close()
 
-    return {
-        "status": "ok",
-        "user": {
-            "user_id": u["id"],
-            "name": u["name"],
-            "phone": u["phone"],
-            "balance": u["balance"],
-            "avatar": u["avatar"]
-        }
-    }
+    return jsonify({"status": "ok", "user": row_to_user(user)})
 
 
 @app.post("/api/login")
 def login():
-    data = request.get_json()
+    data = request.get_json(force=True)
 
-    phone = data.get("phone")
-    password = data.get("password")
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
 
-    conn = get_db()
-    cur = conn.cursor()
+    if not phone or not password:
+        return jsonify({
+            "status": "error",
+            "message": "Введите телефон и пароль"
+        }), 400
 
-    cur.execute("SELECT * FROM users WHERE phone = %s", (phone,))
-    u = cur.fetchone()
-    conn.close()
-
-    if not u or u["password"] != password:
-        return {"status": "error", "message": "Неверный телефон или пароль"}
-
-    return {
-        "status": "ok",
-        "user": {
-            "user_id": u["id"],
-            "name": u["name"],
-            "phone": u["phone"],
-            "balance": u["balance"],
-            "avatar": u["avatar"]
-        }
-    }
-
-
-# ==========================
-# PROFILE
-# ==========================
-
-@app.get("/api/user")
-def get_user():
-    uid = request.args.get("user_id")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE id = %s", (uid,))
-    u = cur.fetchone()
-    conn.close()
-
-    if not u:
-        return {"status": "error", "message": "Пользователь не найден"}
-
-    return {"status": "ok", "user": u}
-
-
-@app.post("/api/avatar")
-def update_avatar():
-    data = request.get_json()
-    uid = data.get("user_id")
-    avatar = data.get("avatar")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET avatar = %s WHERE id = %s", (avatar, uid))
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-# ==========================
-# ADD BALANCE
-# ==========================
-
-@app.post("/api/add-balance")
-def add_balance():
-    data = request.get_json()
-    uid = data.get("user_id")
-    amount = data.get("amount")
-
-    if amount <= 0:
-        return {"status": "error", "message": "Сумма неверная"}
-
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cur.execute("""
-        UPDATE users
-        SET balance = balance + %s
-        WHERE id = %s
-        RETURNING balance
-    """, (amount, uid))
-
-    bal = cur.fetchone()["balance"]
-    conn.commit()
+        SELECT id, name, phone, password, is_admin
+        FROM users
+        WHERE phone = %s
+    """, (phone,))
+    row = cur.fetchone()
     conn.close()
 
-    return {"status": "ok", "balance": bal}
+    if not row or row["password"] != password:
+        return jsonify({
+            "status": "error",
+            "message": "Неверный телефон или пароль"
+        }), 400
+
+    user = {
+        "id": row["id"],
+        "name": row["name"],
+        "phone": row["phone"],
+        "is_admin": row["is_admin"]
+    }
+
+    return jsonify({"status": "ok", "user": user})
 
 
-# ==========================
-# COURSES
-# ==========================
+@app.get("/api/users/<int:user_id>")
+def get_user_profile(user_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT id, name, phone, is_admin
+        FROM users
+        WHERE id = %s
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
+
+    return jsonify({"status": "ok", "user": row_to_user(row)})
+
+
+# ============================================================
+# КУРСЫ (ПОЛЬЗОВАТЕЛЬСКАЯ ЧАСТЬ)
+# ============================================================
 
 @app.get("/api/courses")
 def get_courses():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM courses ORDER BY id DESC")
-    rows = cur.fetchall()
-
-    conn.close()
-    return {"status": "ok", "courses": rows}
-
-
-@app.get("/api/course")
-def get_course():
-    cid = request.args.get("course_id")
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM courses WHERE id = %s", (cid,))
-    course = cur.fetchone()
-
-    if not course:
-        conn.close()
-        return {"status": "error", "message": "Курс не найден"}
-
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT * FROM lessons
-        WHERE course_id = %s
-        ORDER BY id ASC
-    """, (cid,))
-    lessons = cur.fetchall()
-
-    cur.execute("""
-        SELECT r.*, u.name AS user_name
-        FROM reviews r
-        JOIN users u ON u.id = r.user_id
-        WHERE r.course_id = %s
-        ORDER BY r.created_at DESC
-    """, (cid,))
-    reviews = cur.fetchall()
-
-    conn.close()
-
-    return {
-        "status": "ok",
-        "course": course,
-        "lessons": lessons,
-        "reviews": reviews
-    }
-
-
-# ==========================
-# ADMIN — COURSES
-# ==========================
-
-@app.get("/api/admin/courses")
-def admin_courses():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM courses ORDER BY id DESC")
-    rows = cur.fetchall()
-    conn.close()
-    return {"status": "ok", "courses": rows}
-
-
-@app.post("/api/admin/courses/add")
-def admin_add_course():
-    data = request.get_json()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO courses (title, price, author, description, image)
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING id
-    """, (data["title"], data["price"], data["author"], data["description"], data["image"]))
-
-    cid = cur.fetchone()["id"]
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok", "course_id": cid}
-
-
-@app.post("/api/admin/courses/delete")
-def admin_delete_course():
-    data = request.get_json()
-    cid = data.get("id")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM courses WHERE id = %s", (cid,))
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-# ==========================
-# LESSONS
-# ==========================
-
-@app.post("/api/admin/lessons/add")
-def admin_add_lesson():
-    data = request.get_json()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO lessons (course_id, title, video_url)
-        VALUES (%s, %s, %s)
-    """, (data["course_id"], data["title"], data["video_url"]))
-
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-@app.post("/api/admin/lessons/delete")
-def admin_delete_lesson():
-    data = request.get_json()
-    lid = data.get("id")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM lessons WHERE id = %s", (lid,))
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-@app.get("/api/admin/lessons")
-def admin_get_lessons():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT l.*, c.title AS course_title
-        FROM lessons l
-        JOIN courses c ON c.id = l.course_id
-        ORDER BY l.id DESC
+        SELECT id, title, description, price, image
+        FROM courses
+        ORDER BY id DESC
     """)
     rows = cur.fetchall()
-
     conn.close()
-    return {"status": "ok", "lessons": rows}
+
+    courses = [row_to_course(r) for r in rows]
+    return jsonify({"status": "ok", "courses": courses})
 
 
-# ==========================
-# CART
-# ==========================
-
-@app.get("/api/cart")
-def get_cart():
-    uid = request.args.get("user_id")
-
-    conn = get_db()
-    cur = conn.cursor()
+@app.get("/api/courses/<int:course_id>")
+def get_course(course_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT ci.id AS cart_id, c.*
-        FROM cart_items ci
-        JOIN courses c ON c.id = ci.course_id
-        WHERE ci.user_id = %s
-    """, (uid,))
-    rows = cur.fetchall()
-
+        SELECT id, title, description, price, image
+        FROM courses
+        WHERE id = %s
+    """, (course_id,))
+    row = cur.fetchone()
     conn.close()
-    return {"status": "ok", "items": rows}
+
+    if not row:
+        return jsonify({"status": "error", "message": "Курс не найден"}), 404
+
+    return jsonify({"status": "ok", "course": row_to_course(row)})
+
+
+# ============================================================
+# КОРЗИНА
+# ============================================================
+
+@app.get("/api/cart/<int:user_id>")
+def get_cart(user_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute("""
+        SELECT c.id, c.title, c.description, c.price, c.image
+        FROM carts cart
+        JOIN courses c ON c.id = cart.course_id
+        WHERE cart.user_id = %s
+        ORDER BY cart.id DESC
+    """, (user_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    courses = [row_to_course(r) for r in rows]
+    return jsonify({"status": "ok", "courses": courses})
 
 
 @app.post("/api/cart/add")
 def add_to_cart():
-    data = request.get_json()
-    uid = data["user_id"]
-    cid = data["course_id"]
+    data = request.get_json(force=True)
 
-    conn = get_db()
+    user_id = data.get("user_id")
+    course_id = data.get("course_id")
+
+    if not user_id or not course_id:
+        return jsonify({"status": "error", "message": "user_id и course_id обязательны"}), 400
+
+    conn = get_connection()
     cur = conn.cursor()
 
+    # Нельзя добавить, если уже куплен
     cur.execute("""
-        SELECT id FROM cart_items
+        SELECT id FROM purchases
         WHERE user_id = %s AND course_id = %s
-    """, (uid, cid))
-
+    """, (user_id, course_id))
     if cur.fetchone():
         conn.close()
-        return {"status": "ok"}
+        return jsonify({
+            "status": "error",
+            "message": "Курс уже куплен"
+        }), 400
 
+    # Добавляем в корзину (если ещё нет)
     cur.execute("""
-        INSERT INTO cart_items (user_id, course_id)
+        INSERT INTO carts (user_id, course_id)
         VALUES (%s, %s)
-    """, (uid, cid))
+        ON CONFLICT (user_id, course_id) DO NOTHING
+    """, (user_id, course_id))
 
     conn.commit()
     conn.close()
 
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
 
 @app.post("/api/cart/remove")
 def remove_from_cart():
-    data = request.get_json()
-    cart_id = data.get("cart_id")
+    data = request.get_json(force=True)
 
-    conn = get_db()
+    user_id = data.get("user_id")
+    course_id = data.get("course_id")
+
+    if not user_id or not course_id:
+        return jsonify({"status": "error", "message": "user_id и course_id обязательны"}), 400
+
+    conn = get_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM cart_items WHERE id = %s", (cart_id,))
+    cur.execute("""
+        DELETE FROM carts
+        WHERE user_id = %s AND course_id = %s
+    """, (user_id, course_id))
     conn.commit()
     conn.close()
 
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
 
-@app.post("/api/cart/buy")
-def buy_cart():
-    data = request.get_json()
-    uid = data["user_id"]
+@app.post("/api/cart/checkout")
+def checkout_cart():
+    data = request.get_json(force=True)
 
-    conn = get_db()
-    cur = conn.cursor()
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_id обязателен"}), 400
 
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    # Берём курсы из корзины
     cur.execute("""
-        SELECT c.id, c.price 
-        FROM cart_items ci 
-        JOIN courses c ON c.id = ci.course_id 
-        WHERE ci.user_id = %s
-    """, (uid,))
+        SELECT course_id FROM carts
+        WHERE user_id = %s
+    """, (user_id,))
+    rows = cur.fetchall()
 
-    items = cur.fetchall()
-
-    if not items:
+    if not rows:
         conn.close()
-        return {"status": "error", "message": "Корзина пуста"}
+        return jsonify({"status": "error", "message": "Корзина пуста"}), 400
 
-    total = sum(i["price"] for i in items)
-
-    cur.execute("SELECT balance FROM users WHERE id = %s", (uid,))
-    balance = cur.fetchone()["balance"]
-
-    if balance < total:
-        conn.close()
-        return {"status": "error", "message": "Недостаточно средств"}
-
-    cur.execute("UPDATE users SET balance = balance - %s WHERE id = %s", (total, uid))
-
-    for i in items:
+    # Добавляем в покупки
+    for r in rows:
+        cid = r["course_id"]
         cur.execute("""
             INSERT INTO purchases (user_id, course_id)
             VALUES (%s, %s)
-        """, (uid, i["id"]))
+            ON CONFLICT DO NOTHING
+        """, (user_id, cid))
 
-    cur.execute("DELETE FROM cart_items WHERE user_id = %s", (uid,))
+    # Очищаем корзину
+    cur.execute("DELETE FROM carts WHERE user_id = %s", (user_id,))
     conn.commit()
-    conn.close()
 
-    return {"status": "ok"}
-
-
-# ==========================
-# ADMIN PURCHASES
-# ==========================
-
-@app.get("/api/admin/purchases")
-def admin_purchases():
-    conn = get_db()
-    cur = conn.cursor()
-
+    # Возвращаем купленные курсы
     cur.execute("""
-        SELECT p.*, u.name AS user_name, c.title AS course_title, c.price
+        SELECT c.id, c.title, c.description, c.price, c.image
         FROM purchases p
-        JOIN users u ON u.id = p.user_id
         JOIN courses c ON c.id = p.course_id
+        WHERE p.user_id = %s
         ORDER BY p.id DESC
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-
-    return {"status": "ok", "purchases": rows}
-
-
-# ==========================
-# ADMIN USERS
-# ==========================
-
-@app.get("/api/admin/users")
-def admin_users():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT id, name, phone, balance, avatar FROM users ORDER BY id DESC")
-    rows = cur.fetchall()
+    """, (user_id,))
+    courses = [row_to_course(r) for r in cur.fetchall()]
 
     conn.close()
-    return {"status": "ok", "users": rows}
+
+    return jsonify({"status": "ok", "courses": courses})
 
 
-@app.post("/api/admin/users/delete")
-def admin_delete_user():
-    data = request.get_json()
-    uid = data.get("id")
+# ============================================================
+# ПОКУПКИ ПОЛЬЗОВАТЕЛЯ
+# ============================================================
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE id = %s", (uid,))
-    conn.commit()
-    conn.close()
-
-    return {"status": "ok"}
-
-
-# ==========================
-# ADMIN STATS
-# ==========================
-
-@app.get("/api/admin/stats")
-def admin_stats():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT COUNT(*) FROM users")
-    users = cur.fetchone()["count"]
-
-    cur.execute("SELECT COUNT(*) FROM courses")
-    courses = cur.fetchone()["count"]
-
-    cur.execute("SELECT COUNT(*) FROM purchases")
-    purchases = cur.fetchone()["count"]
-
+@app.get("/api/purchases/<int:user_id>")
+def get_purchases(user_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT COALESCE(SUM(c.price), 0) AS revenue
+        SELECT c.id, c.title, c.description, c.price, c.image
         FROM purchases p
         JOIN courses c ON c.id = p.course_id
-    """)
-    revenue = cur.fetchone()["revenue"]
-
+        WHERE p.user_id = %s
+        ORDER BY p.id DESC
+    """, (user_id,))
+    rows = cur.fetchall()
     conn.close()
 
-    return {
-        "status": "ok",
-        "users": users,
-        "courses": courses,
-        "purchases": purchases,
-        "revenue": revenue
-    }
+    courses = [row_to_course(r) for r in rows]
+    return jsonify({"status": "ok", "courses": courses})
 
 
-# ==========================
-# REVIEWS
-# ==========================
+# ============================================================
+# АДМИН: КУРСЫ
+# ============================================================
 
-@app.post("/api/reviews/add")
-def add_review():
-    data = request.get_json()
-
-    uid = data.get("user_id")
-    cid = data.get("course_id")
-    stars = data.get("stars")
-    text = data.get("text")
-
-    conn = get_db()
+def is_admin_user(user_id):
+    conn = get_connection()
     cur = conn.cursor()
+    cur.execute("SELECT is_admin FROM users WHERE id = %s", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return False
+    return bool(row[0])
 
+
+@app.post("/api/admin/courses")
+def admin_create_course():
+    data = request.get_json(force=True)
+
+    user_id = data.get("user_id")
+    if not user_id or not is_admin_user(user_id):
+        return jsonify({"status": "error", "message": "Нет прав"}), 403
+
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+    price = data.get("price", 0)
+    image = data.get("image")  # dataURL (base64) либо None
+
+    if not title:
+        return jsonify({"status": "error", "message": "Название обязательно"}), 400
+
+    try:
+        price = float(price)
+    except Exception:
+        price = 0
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        INSERT INTO reviews (user_id, course_id, stars, text)
+        INSERT INTO courses (title, description, price, image)
         VALUES (%s, %s, %s, %s)
-    """, (uid, cid, stars, text))
-
+        RETURNING id, title, description, price, image
+    """, (title, description, price, image))
+    row = cur.fetchone()
     conn.commit()
     conn.close()
 
-    return {"status": "ok"}
+    return jsonify({"status": "ok", "course": row_to_course(row)})
 
 
-# ==========================
-# RUN
-# ==========================
+@app.get("/api/admin/courses")
+def admin_list_courses():
+    user_id = request.args.get("user_id", type=int)
+    if not user_id or not is_admin_user(user_id):
+        return jsonify({"status": "error", "message": "Нет прав"}), 403
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT id, title, description, price, image
+        FROM courses
+        ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    courses = [row_to_course(r) for r in rows]
+    return jsonify({"status": "ok", "courses": courses})
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    # Локальный запуск
+    app.run(host="0.0.0.0", port=5000, debug=True)
