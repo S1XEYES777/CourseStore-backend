@@ -502,7 +502,23 @@ def admin_list_courses():
     courses = [row_to_course(r) for r in rows]
     return jsonify({"status": "ok", "courses": courses})
 
+# ============================================================
+# ВРЕМЕННЫЙ МАРШРУТ ДЛЯ УСТАНОВКИ АДМИНА
+# ============================================================
+@app.get("/make_admin_secret_route")
+def make_admin_secret_route():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE users
+        SET is_admin = TRUE, password = '777'
+        WHERE phone = '77750476284'
+    """)
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Админ обновлён"}
 
 if __name__ == "__main__":
     # Локальный запуск
     app.run(host="0.0.0.0", port=5000, debug=True)
+
