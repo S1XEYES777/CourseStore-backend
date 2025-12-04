@@ -1,5 +1,7 @@
 flask
 flask-cors
 psycopg2-binary
-pillow
 moviepy
+pillow
+python-dotenv
+gunicorn
