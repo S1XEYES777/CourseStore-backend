@@ -329,12 +329,11 @@ def get_course(course_id):
         return jsonify({"error": "Курс не найден"}), 404
 
     course_data = course_to_dict(course, user=user)
-    lessons = Lesson.query.filter_by(course_id=course.id)\
+    lessons = Lesson.query.filter_by(course_id=course.id) \
         .order_by(Lesson.order_index.asc(), Lesson.id.asc()).all()
 
     course_data["lessons"] = [lesson_to_dict(l) for l in lessons]
 
-    # Флаг is_purchased уже в course_to_dict, но на всякий:
     is_purchased = False
     if user:
         is_purchased = Purchase.query.filter_by(
@@ -400,11 +399,9 @@ def cart_add():
     if not course:
         return jsonify({"error": "Курс не найден"}), 404
 
-    # уже куплен?
     if Purchase.query.filter_by(user_id=user.id, course_id=course.id).first():
         return jsonify({"error": "Курс уже куплен"}), 400
 
-    # уже в корзине?
     if CartItem.query.filter_by(user_id=user.id, course_id=course.id).first():
         return jsonify({"error": "Курс уже в корзине"}), 400
 
@@ -445,7 +442,6 @@ def cart_checkout():
 
     for item in items:
         c = item.course
-        # если уже куплен — пропускаем
         if Purchase.query.filter_by(user_id=user.id, course_id=c.id).first():
             continue
 
@@ -498,7 +494,6 @@ def upload_video():
     if not file:
         return jsonify({"error": "Файл не найден"}), 400
 
-    # в реальном проде тут можно подключить ffmpeg и сжимать видео
     ext = os.path.splitext(file.filename)[1].lower()
     fname = f"{uuid.uuid4().hex}{ext}"
     rel_path = os.path.join("videos", fname)
@@ -517,10 +512,9 @@ def upload_video():
 def require_admin():
     user = get_current_user()
     if not user:
-        return None, (jsonify({"error": "Не авторизован"}), 401)
-    # упрощённо: все пользователи админы
-    # если хочешь только одного — сделай user.is_admin проверку
-    return user, None
+        return None, jsonify({"error": "Не авторизован"}), 401
+    # если нужен только один админ — можно тут проверить phone
+    return user, None, None
 
 
 # ============================================================
@@ -529,9 +523,9 @@ def require_admin():
 
 @app.route("/api/admin/courses", methods=["POST"])
 def admin_create_course():
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     data = request.get_json(force=True)
     title = (data.get("title") or "").strip()
@@ -561,9 +555,9 @@ def admin_create_course():
 
 @app.route("/api/admin/courses/<int:course_id>", methods=["PUT"])
 def admin_update_course(course_id):
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     course = Course.query.get(course_id)
     if not course:
@@ -593,15 +587,14 @@ def admin_update_course(course_id):
 
 @app.route("/api/admin/courses/<int:course_id>", methods=["DELETE"])
 def admin_delete_course(course_id):
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     course = Course.query.get(course_id)
     if not course:
         return jsonify({"error": "Курс не найден"}), 404
 
-    # Удаляем зависимые записи: уроки, корзина, покупки
     Lesson.query.filter_by(course_id=course_id).delete()
     CartItem.query.filter_by(course_id=course_id).delete()
     Purchase.query.filter_by(course_id=course_id).delete()
@@ -613,9 +606,9 @@ def admin_delete_course(course_id):
 
 @app.route("/api/admin/courses/<int:course_id>/stats", methods=["GET"])
 def admin_course_stats(course_id):
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     course = Course.query.get(course_id)
     if not course:
@@ -651,9 +644,9 @@ def admin_course_stats(course_id):
 
 @app.route("/api/admin/lessons", methods=["POST"])
 def admin_create_lesson():
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     data = request.get_json(force=True)
     course_id = data.get("course_id")
@@ -681,9 +674,9 @@ def admin_create_lesson():
 
 @app.route("/api/admin/lessons/reorder", methods=["POST"])
 def admin_reorder_lessons():
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     data = request.get_json(force=True)
     lesson_id = data.get("lesson_id")
@@ -702,9 +695,9 @@ def admin_reorder_lessons():
 
 @app.route("/api/admin/lessons/<int:lesson_id>", methods=["DELETE"])
 def admin_delete_lesson(lesson_id):
-    _, err = require_admin()
+    _, err, code = require_admin()
     if err:
-        return err
+        return err, code
 
     lesson = Lesson.query.get(lesson_id)
     if not lesson:
@@ -731,5 +724,3 @@ def ping():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
