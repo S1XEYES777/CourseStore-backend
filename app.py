@@ -38,7 +38,7 @@ def init_db():
         )
     """)
 
-    # Курсы
+    # Курсы (пока пусто — ты сам потом добавишь)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,29 +70,7 @@ def init_db():
     conn.close()
 
 
-def seed_courses():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("SELECT COUNT(*) FROM courses")
-    count = cur.fetchone()[0]
-
-    if count == 0:
-        courses = [
-            ("Python с нуля", 5000, "python.jpg"),
-            ("Frontend разработка", 7000, "frontend.jpg"),
-            ("Основы искусственного интеллекта", 9000, "ai.jpg")
-        ]
-        cur.executemany(
-            "INSERT INTO courses (title, price, image) VALUES (?, ?, ?)", courses
-        )
-        conn.commit()
-
-    conn.close()
-
-
 init_db()
-seed_courses()
 
 
 # ===========================
@@ -114,6 +92,7 @@ def register():
             (name, phone, password),
         )
         conn.commit()
+        user_id = cur.lastrowid
     except Exception:
         conn.close()
         return jsonify(
@@ -121,7 +100,17 @@ def register():
         )
 
     conn.close()
-    return jsonify({"status": "ok", "message": "Регистрация успешна"})
+
+    # сразу возвращаем пользователя, чтобы фронт мог залогинить
+    user = {
+        "id": user_id,
+        "name": name,
+        "phone": phone,
+        "avatar": None,
+        "balance": 0
+    }
+
+    return jsonify({"status": "ok", "message": "Регистрация успешна", "user": user})
 
 
 # ===========================
@@ -241,7 +230,7 @@ def topup(user_id):
 
 
 # ===========================
-#  КУРСЫ
+#  КУРСЫ (ПУСТО, ТЫ ДОБАВИШЬ САМ)
 # ===========================
 @app.route("/api/courses")
 def get_courses():
@@ -272,7 +261,7 @@ def add_to_cart():
     conn = get_conn()
     cur = conn.cursor()
 
-    # уже куплен?
+    # Уже куплен?
     cur.execute(
         "SELECT 1 FROM purchases WHERE user_id=? AND course_id=?",
         (user_id, course_id),
@@ -283,7 +272,7 @@ def add_to_cart():
             {"status": "error", "message": "Курс уже куплен"}
         )
 
-    # уже в корзине?
+    # Уже в корзине?
     cur.execute(
         "SELECT 1 FROM cart WHERE user_id=? AND course_id=?",
         (user_id, course_id),
@@ -389,13 +378,13 @@ def checkout(user_id):
             {"status": "error", "message": "Недостаточно средств на балансе"}
         )
 
-    # списываем
+    # Списываем
     cur.execute(
         "UPDATE users SET balance = balance - ? WHERE id=?",
         (total, user_id),
     )
 
-    # переносим курсы из корзины в покупки
+    # Переносим курсы из корзины в покупки
     cur.execute(
         """
         INSERT INTO purchases (user_id, course_id)
@@ -404,7 +393,7 @@ def checkout(user_id):
         (user_id,),
     )
 
-    # очищаем корзину
+    # Очищаем корзину
     cur.execute("DELETE FROM cart WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
