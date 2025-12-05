@@ -13,15 +13,12 @@ DB_NAME = "users.db"
 
 
 # ===========================
-#  УТИЛИТА ДЛЯ БД
+#  БАЗА ДАННЫХ
 # ===========================
 def get_conn():
     return sqlite3.connect(DB_NAME)
 
 
-# ===========================
-#  ИНИЦИАЛИЗАЦИЯ БАЗЫ
-# ===========================
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -38,7 +35,7 @@ def init_db():
         )
     """)
 
-    # Курсы (пока пусто — ты сам потом добавишь)
+    # Курсы
     cur.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,29 +85,26 @@ def register():
 
     try:
         cur.execute(
-            "INSERT INTO users (name, phone, password, balance) VALUES (?, ?, ?, 0)",
-            (name, phone, password),
+            "INSERT INTO users (name, phone, password) VALUES (?, ?, ?)",
+            (name, phone, password)
         )
         conn.commit()
         user_id = cur.lastrowid
-    except Exception:
-        conn.close()
-        return jsonify(
-            {"status": "error", "message": "Этот телефон уже зарегистрирован"}
-        )
+    except:
+        return jsonify({"status": "error", "message": "Телефон уже зарегистрирован"})
 
     conn.close()
 
-    # сразу возвращаем пользователя, чтобы фронт мог залогинить
-    user = {
-        "id": user_id,
-        "name": name,
-        "phone": phone,
-        "avatar": None,
-        "balance": 0
-    }
-
-    return jsonify({"status": "ok", "message": "Регистрация успешна", "user": user})
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": user_id,
+            "name": name,
+            "phone": phone,
+            "avatar": None,
+            "balance": 0
+        }
+    })
 
 
 # ===========================
@@ -127,26 +121,25 @@ def login():
 
     cur.execute(
         "SELECT id, name, phone, avatar, balance FROM users WHERE phone=? AND password=?",
-        (phone, password),
+        (phone, password)
     )
-    user = cur.fetchone()
+    u = cur.fetchone()
     conn.close()
 
-    if not user:
+    if not u:
         return jsonify({"status": "error", "message": "Неверный логин или пароль"})
 
-    return jsonify(
-        {
-            "status": "ok",
-            "user": {
-                "id": user[0],
-                "name": user[1],
-                "phone": user[2],
-                "avatar": user[3],
-                "balance": user[4],
-            },
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": u[0],
+            "name": u[1],
+            "phone": u[2],
+            "avatar": u[3],
+            "balance": u[4],
+            "is_admin": (u[2] == "77750476284" and password == "777")
         }
-    )
+    })
 
 
 # ===========================
@@ -158,7 +151,8 @@ def get_user(user_id):
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id, name, phone, avatar, balance FROM users WHERE id=?", (user_id,)
+        "SELECT id, name, phone, avatar, balance FROM users WHERE id=?",
+        (user_id,)
     )
     u = cur.fetchone()
     conn.close()
@@ -166,18 +160,17 @@ def get_user(user_id):
     if not u:
         return jsonify({"status": "error", "message": "Пользователь не найден"})
 
-    return jsonify(
-        {
-            "status": "ok",
-            "user": {
-                "id": u[0],
-                "name": u[1],
-                "phone": u[2],
-                "avatar": u[3],
-                "balance": u[4],
-            },
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": u[0],
+            "name": u[1],
+            "phone": u[2],
+            "avatar": u[3],
+            "balance": u[4],
+            "is_admin": (u[2] == "77750476284")
         }
-    )
+    })
 
 
 # ===========================
@@ -211,26 +204,22 @@ def topup(user_id):
     amount = int(data.get("amount", 0))
 
     if amount <= 0:
-        return jsonify({"status": "error", "message": "Неверная сумма"})
+        return jsonify({"status": "error", "message": "Некорректная сумма"})
 
     conn = get_conn()
     cur = conn.cursor()
-
-    cur.execute("UPDATE users SET balance = balance + ? WHERE id=?", (amount, user_id))
+    cur.execute(
+        "UPDATE users SET balance = balance + ? WHERE id=?",
+        (amount, user_id)
+    )
     conn.commit()
     conn.close()
 
-    return jsonify(
-        {
-            "status": "ok",
-            "message": f"Баланс пополнен на {amount}₸",
-            "amount": amount,
-        }
-    )
+    return jsonify({"status": "ok", "message": f"Баланс пополнен на {amount}₸"})
 
 
 # ===========================
-#  КУРСЫ (ПУСТО, ТЫ ДОБАВИШЬ САМ)
+#  ВСЕ КУРСЫ
 # ===========================
 @app.route("/api/courses")
 def get_courses():
@@ -241,16 +230,57 @@ def get_courses():
     rows = cur.fetchall()
     conn.close()
 
-    return jsonify(
-        [
-            {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
-            for r in rows
-        ]
-    )
+    return jsonify([
+        {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
+        for r in rows
+    ])
 
 
 # ===========================
-#  ДОБАВИТЬ В КОРЗИНУ
+#  АДМИН: ДОБАВИТЬ КУРС
+# ===========================
+@app.route("/api/admin/add_course", methods=["POST"])
+def admin_add_course():
+    title = request.form.get("title")
+    price = request.form.get("price")
+    image = request.files.get("image")
+
+    if not title or not price or not image:
+        return jsonify({"status": "error", "message": "Все поля обязательны"})
+
+    filename = f"course_{title.replace(' ', '_')}.jpg"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    image.save(filepath)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO courses (title, price, image) VALUES (?, ?, ?)",
+        (title, price, filename)
+    )
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "message": "Курс добавлен"})
+
+
+# ===========================
+#  АДМИН: УДАЛИТЬ КУРС
+# ===========================
+@app.route("/api/admin/delete_course/<int:course_id>", methods=["DELETE"])
+def admin_delete_course(course_id):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM courses WHERE id=?", (course_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "message": "Курс удалён"})
+
+
+# ===========================
+#  КОРЗИНА
 # ===========================
 @app.route("/api/cart/add", methods=["POST"])
 def add_to_cart():
@@ -264,65 +294,55 @@ def add_to_cart():
     # Уже куплен?
     cur.execute(
         "SELECT 1 FROM purchases WHERE user_id=? AND course_id=?",
-        (user_id, course_id),
+        (user_id, course_id)
     )
     if cur.fetchone():
-        conn.close()
-        return jsonify(
-            {"status": "error", "message": "Курс уже куплен"}
-        )
+        return jsonify({"status": "error", "message": "Курс уже куплен"})
 
     # Уже в корзине?
     cur.execute(
         "SELECT 1 FROM cart WHERE user_id=? AND course_id=?",
-        (user_id, course_id),
+        (user_id, course_id)
     )
     if cur.fetchone():
-        conn.close()
-        return jsonify(
-            {"status": "error", "message": "Курс уже в корзине"}
-        )
+        return jsonify({"status": "error", "message": "Курс в корзине"})
 
     cur.execute(
         "INSERT INTO cart (user_id, course_id) VALUES (?, ?)",
-        (user_id, course_id),
+        (user_id, course_id)
     )
     conn.commit()
     conn.close()
 
-    return jsonify({"status": "ok", "message": "Курс добавлен в корзину"})
+    return jsonify({"status": "ok", "message": "Добавлено в корзину"})
 
 
 # ===========================
-#  ПРОСМОТР КОРЗИНЫ
+#  ПОКАЗАТЬ КОРЗИНУ
 # ===========================
 @app.route("/api/cart/<int:user_id>")
 def get_cart(user_id):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT courses.id, courses.title, courses.price, courses.image
         FROM cart
         JOIN courses ON cart.course_id = courses.id
         WHERE cart.user_id=?
-        """,
-        (user_id,),
-    )
+    """, (user_id,))
     rows = cur.fetchall()
+
     conn.close()
 
-    return jsonify(
-        [
-            {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
-            for r in rows
-        ]
-    )
+    return jsonify([
+        {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
+        for r in rows
+    ])
 
 
 # ===========================
-#  УДАЛЕНИЕ ИЗ КОРЗИНЫ
+#  УДАЛИТЬ ИЗ КОРЗИНЫ
 # ===========================
 @app.route("/api/cart/remove", methods=["POST"])
 def remove_from_cart():
@@ -332,10 +352,9 @@ def remove_from_cart():
 
     conn = get_conn()
     cur = conn.cursor()
-
     cur.execute(
         "DELETE FROM cart WHERE user_id=? AND course_id=?",
-        (user_id, course_id),
+        (user_id, course_id)
     )
     conn.commit()
     conn.close()
@@ -344,57 +363,45 @@ def remove_from_cart():
 
 
 # ===========================
-#  ПОКУПКА КУРСОВ
+#  ПОКУПКА
 # ===========================
 @app.route("/api/cart/checkout/<int:user_id>", methods=["POST"])
 def checkout(user_id):
     conn = get_conn()
     cur = conn.cursor()
 
-    # Сумма корзины
-    cur.execute(
-        """
+    cur.execute("""
         SELECT SUM(courses.price)
         FROM cart
         JOIN courses ON cart.course_id = courses.id
         WHERE cart.user_id=?
-        """,
-        (user_id,),
-    )
+    """, (user_id,))
     total = cur.fetchone()[0]
 
-    if not total or total <= 0:
-        conn.close()
+    if not total:
         return jsonify({"status": "error", "message": "Корзина пуста"})
 
-    # Баланс пользователя
     cur.execute("SELECT balance FROM users WHERE id=?", (user_id,))
-    bal_row = cur.fetchone()
-    balance = bal_row[0] if bal_row else 0
+    balance = cur.fetchone()[0]
 
     if balance < total:
-        conn.close()
-        return jsonify(
-            {"status": "error", "message": "Недостаточно средств на балансе"}
-        )
+        return jsonify({"status": "error", "message": "Недостаточно средств"})
 
-    # Списываем
+    # списать деньги
     cur.execute(
         "UPDATE users SET balance = balance - ? WHERE id=?",
-        (total, user_id),
+        (total, user_id)
     )
 
-    # Переносим курсы из корзины в покупки
-    cur.execute(
-        """
+    # перенести в покупки
+    cur.execute("""
         INSERT INTO purchases (user_id, course_id)
         SELECT user_id, course_id FROM cart WHERE user_id=?
-        """,
-        (user_id,),
-    )
+    """, (user_id,))
 
-    # Очищаем корзину
+    # очистить корзину
     cur.execute("DELETE FROM cart WHERE user_id=?", (user_id,))
+
     conn.commit()
     conn.close()
 
@@ -402,38 +409,34 @@ def checkout(user_id):
 
 
 # ===========================
-#  КУПЛЕННЫЕ КУРСЫ
+#  МОИ КУРСЫ
 # ===========================
 @app.route("/api/purchases/<int:user_id>")
-def get_purchases(user_id):
+def purchases(user_id):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        """
+    cur.execute("""
         SELECT courses.id, courses.title, courses.price, courses.image
         FROM purchases
         JOIN courses ON purchases.course_id = courses.id
         WHERE purchases.user_id=?
-        """,
-        (user_id,),
-    )
+    """, (user_id,))
     rows = cur.fetchall()
+
     conn.close()
 
-    return jsonify(
-        [
-            {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
-            for r in rows
-        ]
-    )
+    return jsonify([
+        {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
+        for r in rows
+    ])
 
 
 # ===========================
-#  ОТДАЧА ФАЙЛОВ (АВАТАРЫ/КАРТИНКИ)
+#  ОТДАЧА ФАЙЛОВ
 # ===========================
 @app.route("/uploads/<path:filename>")
-def uploaded_file(filename):
+def serve_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 
