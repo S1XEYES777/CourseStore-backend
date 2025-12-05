@@ -9,9 +9,8 @@ CORS(app)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-
 # ===========================
-#   ИНИЦИАЛИЗАЦИЯ БАЗЫ
+# ИНИЦИАЛИЗАЦИЯ БАЗЫ
 # ===========================
 def init_db():
     conn = sqlite3.connect("users.db")
@@ -35,7 +34,7 @@ init_db()
 
 
 # ===========================
-#   РЕГИСТРАЦИЯ
+# РЕГИСТРАЦИЯ
 # ===========================
 @app.route("/api/register", methods=["POST"])
 def register():
@@ -52,13 +51,13 @@ def register():
                     (name, phone, password))
         conn.commit()
     except:
-        return jsonify({"status": "error", "message": "Телефон уже есть"})
+        return jsonify({"status": "error", "message": "Этот телефон уже зарегистрирован"})
 
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "message": "Регистрация успешна"})
 
 
 # ===========================
-#   ВХОД
+# ВХОД
 # ===========================
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -74,7 +73,7 @@ def login():
     user = cur.fetchone()
 
     if not user:
-        return jsonify({"status": "error", "message": "Неверный логин"})
+        return jsonify({"status": "error", "message": "Неверный логин или пароль"})
 
     return jsonify({
         "status": "ok",
@@ -89,7 +88,7 @@ def login():
 
 
 # ===========================
-#   ПРОФИЛЬ
+# ПОЛУЧЕНИЕ ПРОФИЛЯ
 # ===========================
 @app.route("/api/user/<int:user_id>")
 def get_user(user_id):
@@ -100,7 +99,7 @@ def get_user(user_id):
     u = cur.fetchone()
 
     if not u:
-        return jsonify({"status": "error"})
+        return jsonify({"status": "error", "message": "Пользователь не найден"})
 
     return jsonify({
         "status": "ok",
@@ -115,11 +114,13 @@ def get_user(user_id):
 
 
 # ===========================
-#   ЗАГРУЗКА АВАТАРА
+# ЗАГРУЗКА АВАТАРА
 # ===========================
 @app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
 def upload_avatar(user_id):
-    file = request.files["avatar"]
+    file = request.files.get("avatar")
+    if not file:
+        return jsonify({"status": "error", "message": "Файл не найден"})
 
     filename = f"user_{user_id}.jpg"
     filepath = os.path.join(UPLOAD_FOLDER, filename)
@@ -134,11 +135,15 @@ def upload_avatar(user_id):
 
 
 # ===========================
-#   ПОПОЛНЕНИЕ БАЛАНСА
+# ПОПОЛНЕНИЕ БАЛАНСА ЛЮБОЙ СУММОЙ
 # ===========================
 @app.route("/api/topup/<int:user_id>", methods=["POST"])
 def topup(user_id):
-    amount = 500  # фиксированное пополнение
+    data = request.json
+    amount = int(data.get("amount", 0))
+
+    if amount <= 0:
+        return jsonify({"status": "error", "message": "Неверная сумма"})
 
     conn = sqlite3.connect("users.db")
     cur = conn.cursor()
@@ -146,17 +151,20 @@ def topup(user_id):
     cur.execute("UPDATE users SET balance = balance + ? WHERE id=?", (amount, user_id))
     conn.commit()
 
-    return jsonify({"status": "ok", "amount": amount})
+    return jsonify({"status": "ok", "message": f"Баланс пополнен на {amount}₸", "amount": amount})
 
 
 # ===========================
-#  ОТДАЧА АВАТАРОВ
+# ОТДАЧА ФАЙЛОВ АВАТАРОВ
 # ===========================
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 
+# ===========================
+# ТЕСТ ДОСТУПА
+# ===========================
 @app.route("/")
 def home():
     return jsonify({"status": "backend ok"})
