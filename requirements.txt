@@ -1,8 +1,0 @@
-flask
-flask-cors
-flask_sqlalchemy
-psycopg2-binary
-moviepy
-pillow
-python-dotenv
-gunicorn
