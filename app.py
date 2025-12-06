@@ -10,20 +10,19 @@ CORS(app)
 # -------------------------------
 # Создание папки uploads
 # -------------------------------
-
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 
 # -------------------------------
 # Подключение к БД через DATABASE_URL
 # -------------------------------
-
 up.uses_netloc.append("postgres")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise Exception("❌ ERROR: DATABASE_URL не найден!")
+    raise Exception("❌ ERROR: DATABASE_URL is missing!")
 
 url = up.urlparse(DATABASE_URL)
 
@@ -37,7 +36,56 @@ conn = psycopg2.connect(
 )
 
 # -------------------------------
-# Преобразование строки user
+# АВТО-СОЗДАНИЕ ВСЕХ ТАБЛИЦ
+# -------------------------------
+
+def create_tables():
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            phone TEXT UNIQUE,
+            password TEXT,
+            balance INTEGER DEFAULT 0,
+            avatar TEXT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS courses (
+            id SERIAL PRIMARY KEY,
+            title TEXT,
+            price INTEGER,
+            image TEXT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cart (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            course_id INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS purchased (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            course_id INTEGER
+        );
+    """)
+
+    conn.commit()
+    print("✅ Все таблицы созданы или уже существуют!")
+
+create_tables()
+
+
+# -------------------------------
+# Помощник user
 # -------------------------------
 
 def dict_user(row):
@@ -49,6 +97,7 @@ def dict_user(row):
         "balance": row[4],
         "avatar": row[5]
     }
+
 
 # -------------------------------
 # Регистрация
@@ -77,8 +126,9 @@ def register():
 
     return jsonify({"status": "ok", "user": dict_user(row)})
 
+
 # -------------------------------
-# Вход
+# Логин
 # -------------------------------
 
 @app.route("/api/login", methods=["POST"])
@@ -95,6 +145,7 @@ def login():
         return jsonify({"status": "error", "message": "Неверный логин или пароль"})
 
     return jsonify({"status": "ok", "user": dict_user(row)})
+
 
 # -------------------------------
 # Загрузка аватара
@@ -124,16 +175,18 @@ def upload_avatar():
         print("UPLOAD ERROR:", e)
         return jsonify({"status": "error", "message": str(e)})
 
+
 # -------------------------------
-# Отдача файлов из uploads/
+# Выдача файлов uploads
 # -------------------------------
 
 @app.route("/uploads/<path:path>")
 def send_upload(path):
     return send_from_directory(UPLOAD_FOLDER, path)
 
+
 # -------------------------------
-# Пополнение баланса
+# Баланс
 # -------------------------------
 
 @app.route("/api/add_balance", methods=["POST"])
@@ -149,8 +202,9 @@ def add_balance():
 
     return jsonify({"status": "ok", "new_balance": new_balance})
 
+
 # -------------------------------
-# CURSES — получение всех курсов
+# Курсы
 # -------------------------------
 
 @app.route("/api/courses")
@@ -159,15 +213,9 @@ def get_courses():
     cur.execute("SELECT * FROM courses")
     rows = cur.fetchall()
 
-    result = []
-    for r in rows:
-        result.append({"id": r[0], "title": r[1], "price": r[2], "image": r[3]})
-
+    result = [{"id": r[0], "title": r[1], "price": r[2], "image": r[3]} for r in rows]
     return jsonify(result)
 
-# -------------------------------
-# Добавление курса (Admin)
-# -------------------------------
 
 @app.route("/api/admin/add_course", methods=["POST"])
 def add_course():
@@ -194,9 +242,6 @@ def add_course():
         print("ADD COURSE ERROR:", e)
         return jsonify({"status": "error", "message": str(e)})
 
-# -------------------------------
-# Удаление курса
-# -------------------------------
 
 @app.route("/api/admin/delete_course/<int:cid>", methods=["DELETE"])
 def delete_course(cid):
@@ -204,6 +249,7 @@ def delete_course(cid):
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
     conn.commit()
     return jsonify({"status": "ok"})
+
 
 # -------------------------------
 # Корзина
@@ -221,6 +267,7 @@ def add_to_cart():
 
     return jsonify({"status": "ok"})
 
+
 @app.route("/api/cart/<int:uid>")
 def cart(uid):
     cur = conn.cursor()
@@ -236,6 +283,7 @@ def cart(uid):
         {"id": r[0], "title": r[1], "price": r[2]} for r in rows
     ])
 
+
 @app.route("/api/cart/remove", methods=["POST"])
 def remove_cart():
     data = request.json
@@ -247,6 +295,7 @@ def remove_cart():
     conn.commit()
 
     return jsonify({"status": "ok"})
+
 
 # -------------------------------
 # Покупка
@@ -260,12 +309,14 @@ def checkout(uid):
     rows = cur.fetchall()
 
     for r in rows:
-        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)", (uid, r[0]))
+        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)",
+                    (uid, r[0]))
 
     cur.execute("DELETE FROM cart WHERE user_id=%s", (uid,))
     conn.commit()
 
     return jsonify({"status": "ok"})
+
 
 # -------------------------------
 # Мои курсы
@@ -285,6 +336,7 @@ def purchases(uid):
     return jsonify([
         {"id": r[0], "title": r[1], "price": r[2]} for r in rows
     ])
+
 
 # -------------------------------
 # RUN SERVER
