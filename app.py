@@ -7,20 +7,23 @@ import urllib.parse as up
 app = Flask(__name__)
 CORS(app)
 
-# Папка для хранения изображений
+# -------------------------------
+# Создание папки uploads
+# -------------------------------
+
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# =============================
-#       ПОДКЛЮЧЕНИЕ К БАЗЕ
-# =============================
+# -------------------------------
+# Подключение к БД через DATABASE_URL
+# -------------------------------
 
 up.uses_netloc.append("postgres")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise Exception("❌ ERROR: DATABASE_URL не найден в переменных окружения Render!")
+    raise Exception("❌ ERROR: DATABASE_URL не найден!")
 
 url = up.urlparse(DATABASE_URL)
 
@@ -33,10 +36,9 @@ conn = psycopg2.connect(
     sslmode="require"
 )
 
-
-# =============================
-#     ПРЕОБРАЗОВАТЕЛЬ USER
-# =============================
+# -------------------------------
+# Преобразование строки user
+# -------------------------------
 
 def dict_user(row):
     return {
@@ -48,10 +50,9 @@ def dict_user(row):
         "avatar": row[5]
     }
 
-
-# =============================
-#         РЕГИСТРАЦИЯ
-# =============================
+# -------------------------------
+# Регистрация
+# -------------------------------
 
 @app.route("/api/register", methods=["POST"])
 def register():
@@ -61,7 +62,6 @@ def register():
     password = data["password"]
 
     cur = conn.cursor()
-
     cur.execute("SELECT * FROM users WHERE phone=%s", (phone,))
     if cur.fetchone():
         return jsonify({"status": "error", "message": "Номер телефона занят"})
@@ -77,10 +77,9 @@ def register():
 
     return jsonify({"status": "ok", "user": dict_user(row)})
 
-
-# =============================
-#            ВХОД
-# =============================
+# -------------------------------
+# Вход
+# -------------------------------
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -97,40 +96,45 @@ def login():
 
     return jsonify({"status": "ok", "user": dict_user(row)})
 
-
-# =============================
-#        ЗАГРУЗКА АВАТАРА
-# =============================
+# -------------------------------
+# Загрузка аватара
+# -------------------------------
 
 @app.route("/api/upload_avatar", methods=["POST"])
 def upload_avatar():
-    user_id = request.form.get("user_id")
-    file = request.files.get("avatar")
+    try:
+        user_id = request.form.get("user_id")
+        file = request.files.get("avatar")
 
-    if not user_id or not file:
-        return jsonify({"status": "error", "message": "Нет файла"})
+        if not user_id or not file:
+            return jsonify({"status": "error", "message": "Нет файла"})
 
-    filename = f"avatar_{user_id}.png"
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
+        filename = f"avatar_{user_id}.png"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
 
-    file.save(filepath)
+        file.save(filepath)
 
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (filename, user_id))
-    conn.commit()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (filename, user_id))
+        conn.commit()
 
-    return jsonify({"status": "ok", "filename": filename})
+        return jsonify({"status": "ok", "filename": filename})
 
+    except Exception as e:
+        print("UPLOAD ERROR:", e)
+        return jsonify({"status": "error", "message": str(e)})
 
-# Отдача изображений
+# -------------------------------
+# Отдача файлов из uploads/
+# -------------------------------
+
 @app.route("/uploads/<path:path>")
-def send_uploads(path):
+def send_upload(path):
     return send_from_directory(UPLOAD_FOLDER, path)
 
-
-# =============================
-#     ПОПОЛНЕНИЕ БАЛАНСА
-# =============================
+# -------------------------------
+# Пополнение баланса
+# -------------------------------
 
 @app.route("/api/add_balance", methods=["POST"])
 def add_balance():
@@ -145,10 +149,9 @@ def add_balance():
 
     return jsonify({"status": "ok", "new_balance": new_balance})
 
-
-# =============================
-#            КУРСЫ
-# =============================
+# -------------------------------
+# CURSES — получение всех курсов
+# -------------------------------
 
 @app.route("/api/courses")
 def get_courses():
@@ -158,49 +161,53 @@ def get_courses():
 
     result = []
     for r in rows:
-        result.append({
-            "id": r[0],
-            "title": r[1],
-            "price": r[2],
-            "image": r[3]
-        })
+        result.append({"id": r[0], "title": r[1], "price": r[2], "image": r[3]})
 
     return jsonify(result)
 
+# -------------------------------
+# Добавление курса (Admin)
+# -------------------------------
 
 @app.route("/api/admin/add_course", methods=["POST"])
 def add_course():
-    title = request.form.get("title")
-    price = request.form.get("price")
-    image = request.files.get("image")
+    try:
+        title = request.form.get("title")
+        price = request.form.get("price")
+        image = request.files.get("image")
 
-    if not title or not price or not image:
-        return jsonify({"status": "error", "message": "Заполните все поля"})
+        if not title or not price or not image:
+            return jsonify({"status": "error", "message": "Заполните все поля"})
 
-    filename = f"course_{title.replace(' ', '_')}.png"
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    image.save(filepath)
+        filename = f"course_{title.replace(' ', '_')}.png"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        image.save(filepath)
 
-    cur = conn.cursor()
-    cur.execute("INSERT INTO courses (title, price, image) VALUES (%s, %s, %s)",
-                (title, price, filename))
-    conn.commit()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO courses (title, price, image) VALUES (%s, %s, %s)",
+                    (title, price, filename))
+        conn.commit()
 
-    return jsonify({"status": "ok"})
+        return jsonify({"status": "ok"})
 
+    except Exception as e:
+        print("ADD COURSE ERROR:", e)
+        return jsonify({"status": "error", "message": str(e)})
+
+# -------------------------------
+# Удаление курса
+# -------------------------------
 
 @app.route("/api/admin/delete_course/<int:cid>", methods=["DELETE"])
 def delete_course(cid):
     cur = conn.cursor()
     cur.execute("DELETE FROM courses WHERE id=%s", (cid,))
     conn.commit()
-
     return jsonify({"status": "ok"})
 
-
-# =============================
-#           КОРЗИНА
-# =============================
+# -------------------------------
+# Корзина
+# -------------------------------
 
 @app.route("/api/cart/add", methods=["POST"])
 def add_to_cart():
@@ -214,9 +221,8 @@ def add_to_cart():
 
     return jsonify({"status": "ok"})
 
-
 @app.route("/api/cart/<int:uid>")
-def get_cart(uid):
+def cart(uid):
     cur = conn.cursor()
     cur.execute("""
         SELECT courses.id, courses.title, courses.price
@@ -226,12 +232,12 @@ def get_cart(uid):
     """, (uid,))
     rows = cur.fetchall()
 
-    result = [{"id": r[0], "title": r[1], "price": r[2]} for r in rows]
-    return jsonify(result)
-
+    return jsonify([
+        {"id": r[0], "title": r[1], "price": r[2]} for r in rows
+    ])
 
 @app.route("/api/cart/remove", methods=["POST"])
-def remove_from_cart():
+def remove_cart():
     data = request.json
     uid = data["user_id"]
     cid = data["course_id"]
@@ -242,10 +248,9 @@ def remove_from_cart():
 
     return jsonify({"status": "ok"})
 
-
-# =============================
-#           ПОКУПКА
-# =============================
+# -------------------------------
+# Покупка
+# -------------------------------
 
 @app.route("/api/cart/checkout/<int:uid>", methods=["POST"])
 def checkout(uid):
@@ -255,18 +260,16 @@ def checkout(uid):
     rows = cur.fetchall()
 
     for r in rows:
-        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)",
-                    (uid, r[0]))
+        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)", (uid, r[0]))
 
     cur.execute("DELETE FROM cart WHERE user_id=%s", (uid,))
     conn.commit()
 
     return jsonify({"status": "ok"})
 
-
-# =============================
-#         МОИ КУРСЫ
-# =============================
+# -------------------------------
+# Мои курсы
+# -------------------------------
 
 @app.route("/api/purchases/<int:uid>")
 def purchases(uid):
@@ -280,14 +283,12 @@ def purchases(uid):
     rows = cur.fetchall()
 
     return jsonify([
-        {"id": r[0], "title": r[1], "price": r[2]}
-        for r in rows
+        {"id": r[0], "title": r[1], "price": r[2]} for r in rows
     ])
 
-
-# =============================
-#             RUN
-# =============================
+# -------------------------------
+# RUN SERVER
+# -------------------------------
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
