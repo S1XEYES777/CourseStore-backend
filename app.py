@@ -35,6 +35,7 @@ conn = psycopg2.connect(
     sslmode="require"
 )
 
+
 # -------------------------------
 # АВТО-СОЗДАНИЕ ВСЕХ ТАБЛИЦ
 # -------------------------------
@@ -58,7 +59,9 @@ def create_tables():
             id SERIAL PRIMARY KEY,
             title TEXT,
             price INTEGER,
-            image TEXT
+            image TEXT,
+            description TEXT,
+            author TEXT
         );
     """)
 
@@ -79,7 +82,7 @@ def create_tables():
     """)
 
     conn.commit()
-    print("✅ Все таблицы созданы или уже существуют!")
+    print("✅ Все таблицы созданы!")
 
 create_tables()
 
@@ -173,6 +176,7 @@ def upload_avatar():
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
+        conn.rollback()
         return jsonify({"status": "error", "message": str(e)})
 
 
@@ -213,7 +217,17 @@ def get_courses():
     cur.execute("SELECT * FROM courses")
     rows = cur.fetchall()
 
-    result = [{"id": r[0], "title": r[1], "price": r[2], "image": r[3]} for r in rows]
+    result = [
+        {
+            "id": r[0],
+            "title": r[1],
+            "price": r[2],
+            "image": r[3],
+            "description": r[4],
+            "author": r[5]
+        } for r in rows
+    ]
+
     return jsonify(result)
 
 
@@ -222,9 +236,11 @@ def add_course():
     try:
         title = request.form.get("title")
         price = request.form.get("price")
+        description = request.form.get("description")
+        author = request.form.get("author")
         image = request.files.get("image")
 
-        if not title or not price or not image:
+        if not title or not price or not description or not author or not image:
             return jsonify({"status": "error", "message": "Заполните все поля"})
 
         filename = f"course_{title.replace(' ', '_')}.png"
@@ -232,14 +248,17 @@ def add_course():
         image.save(filepath)
 
         cur = conn.cursor()
-        cur.execute("INSERT INTO courses (title, price, image) VALUES (%s, %s, %s)",
-                    (title, price, filename))
+        cur.execute("""
+            INSERT INTO courses (title, price, image, description, author)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (title, price, filename, description, author))
         conn.commit()
 
         return jsonify({"status": "ok"})
 
     except Exception as e:
         print("ADD COURSE ERROR:", e)
+        conn.rollback()
         return jsonify({"status": "error", "message": str(e)})
 
 
@@ -309,8 +328,7 @@ def checkout(uid):
     rows = cur.fetchall()
 
     for r in rows:
-        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)",
-                    (uid, r[0]))
+        cur.execute("INSERT INTO purchased (user_id, course_id) VALUES (%s, %s)", (uid, r[0]))
 
     cur.execute("DELETE FROM cart WHERE user_id=%s", (uid,))
     conn.commit()
