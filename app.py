@@ -259,6 +259,23 @@ def get_purchases(uid):
 
     return jsonify(result)
 
+@app.route("/api/upload_avatar", methods=["POST"])
+def upload_avatar():
+    user_id = request.form.get("user_id")
+    file = request.files.get("avatar")
+
+    if not user_id or not file:
+        return jsonify({"status": "error", "message": "Нет файла"})
+
+    filename = f"avatar_{user_id}.png"
+    filepath = os.path.join("uploads", filename)
+    file.save(filepath)
+
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (filename, user_id))
+    conn.commit()
+
+    return jsonify({"status": "ok", "filename": filename})
 
 # =============== ЗАПУСК ===============
 
