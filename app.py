@@ -151,19 +151,24 @@ def add_course():
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO courses (title, price, author, description, image)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (title, price, author, description, filename))
-    
-    conn.commit()
+
+    try:
+        cur.execute("""
+            INSERT INTO courses (title, price, author, description, image)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (title, price, author, description, filename))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"status": "error", "message": str(e)})
+
     cur.close()
     conn.close()
 
     return jsonify({"status": "ok"})
 
 # -------------------------
-#   СПИСОК КУРСОВ
+#   ПОЛУЧЕНИЕ ВСЕХ КУРСОВ
 # -------------------------
 @app.route("/api/courses")
 def get_courses():
@@ -187,6 +192,25 @@ def get_courses():
     cur.close()
     conn.close()
     return jsonify(courses)
+
+# -------------------------
+#   УДАЛЕНИЕ КУРСА
+# -------------------------
+@app.route("/api/delete_course/<int:course_id>", methods=["DELETE"])
+def delete_course(course_id):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("DELETE FROM courses WHERE id=%s", (course_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"status": "error", "message": str(e)})
+
+    cur.close()
+    conn.close()
+    return jsonify({"status": "ok"})
 
 # -------------------------
 #   АВАТАР ЗАГРУЗКА
