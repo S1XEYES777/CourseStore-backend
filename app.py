@@ -7,31 +7,33 @@ from urllib.parse import urlparse
 app = Flask(__name__)
 CORS(app)
 
-# -------------------------
-#   ПАПКА ДЛЯ АВАТАРОВ И КАРТИНОК
-# -------------------------
-UPLOAD_FOLDER = "uploads"
+# ----------------------------
+# ПАПКА ДЛЯ ХРАНЕНИЯ ФАЙЛОВ
+# ----------------------------
+UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# -------------------------
-#   ПОДКЛЮЧЕНИЕ К БД
-# -------------------------
+
+# ----------------------------
+# ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
+# ----------------------------
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_conn():
-    result = urlparse(DATABASE_URL)
+    url = urlparse(DATABASE_URL)
     return psycopg2.connect(
-        database=result.path[1:],
-        user=result.username,
-        password=result.password,
-        host=result.hostname,
-        port=result.port,
+        database=url.path[1:],
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port,
         sslmode="require"
     )
 
-# -------------------------
-#   СОЗДАНИЕ ТАБЛИЦ
-# -------------------------
+
+# ----------------------------
+# СОЗДАНИЕ ТАБЛИЦ
+# ----------------------------
 def create_tables():
     conn = get_conn()
     cur = conn.cursor()
@@ -71,9 +73,10 @@ def create_tables():
 
 create_tables()
 
-# -------------------------
-#   РЕГИСТРАЦИЯ
-# -------------------------
+
+# ----------------------------
+# РЕГИСТРАЦИЯ
+# ----------------------------
 @app.route("/api/register", methods=["POST"])
 def register():
     data = request.json
@@ -85,9 +88,11 @@ def register():
     cur = conn.cursor()
 
     try:
-        cur.execute("INSERT INTO users (name, phone, password) VALUES (%s, %s, %s) RETURNING id, name, phone;",
-                    (name, phone, password))
-        user = cur.fetchone()
+        cur.execute(
+            "INSERT INTO users (name, phone, password) VALUES (%s, %s, %s) RETURNING id, name, phone, avatar;",
+            (name, phone, password)
+        )
+        new_user = cur.fetchone()
         conn.commit()
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -98,12 +103,18 @@ def register():
 
     return jsonify({
         "status": "ok",
-        "user": {"id": user[0], "name": user[1], "phone": user[2], "avatar": None}
+        "user": {
+            "id": new_user[0],
+            "name": new_user[1],
+            "phone": new_user[2],
+            "avatar": new_user[3]
+        }
     })
 
-# -------------------------
-#   ВХОД
-# -------------------------
+
+# ----------------------------
+# ЛОГИН
+# ----------------------------
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.json
@@ -112,8 +123,12 @@ def login():
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, phone, avatar FROM users WHERE phone=%s AND password=%s",
-                (phone, password))
+
+    cur.execute(
+        "SELECT id, name, phone, avatar FROM users WHERE phone=%s AND password=%s",
+        (phone, password)
+    )
+
     user = cur.fetchone()
     cur.close()
     conn.close()
@@ -131,45 +146,43 @@ def login():
         }
     })
 
-# -------------------------
-#   ДОБАВЛЕНИЕ КУРСА (АДМИН)
-# -------------------------
+
+# ----------------------------
+# ДОБАВЛЕНИЕ КУРСА (АДМИН)
+# ----------------------------
 @app.route("/api/add_course", methods=["POST"])
 def add_course():
     title = request.form.get("title")
     price = request.form.get("price")
     author = request.form.get("author")
     description = request.form.get("description")
-    file = request.files.get("image")
 
-    if not file:
+    image = request.files.get("image")
+    if not image:
         return jsonify({"status": "error", "message": "Нет изображения"})
 
-    filename = file.filename
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(filepath)
+    filename = image.filename
+    path = os.path.join(UPLOAD_FOLDER, filename)
+    image.save(path)
 
     conn = get_conn()
     cur = conn.cursor()
 
-    try:
-        cur.execute("""
-            INSERT INTO courses (title, price, author, description, image)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (title, price, author, description, filename))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        return jsonify({"status": "error", "message": str(e)})
+    cur.execute("""
+        INSERT INTO courses (title, price, author, description, image)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (title, price, author, description, filename))
 
+    conn.commit()
     cur.close()
     conn.close()
 
     return jsonify({"status": "ok"})
 
-# -------------------------
-#   ПОЛУЧЕНИЕ ВСЕХ КУРСОВ
-# -------------------------
+
+# ----------------------------
+# ПОЛУЧЕНИЕ ВСЕХ КУРСОВ
+# ----------------------------
 @app.route("/api/courses")
 def get_courses():
     conn = get_conn()
@@ -178,43 +191,42 @@ def get_courses():
     cur.execute("SELECT id, title, price, author, description, image FROM courses;")
     rows = cur.fetchall()
 
-    courses = []
-    for r in rows:
-        courses.append({
+    cur.close()
+    conn.close()
+
+    return jsonify([
+        {
             "id": r[0],
             "title": r[1],
             "price": r[2],
             "author": r[3],
             "description": r[4],
-            "image": r[5],
-        })
+            "image": r[5]
+        }
+        for r in rows
+    ])
 
-    cur.close()
-    conn.close()
-    return jsonify(courses)
 
-# -------------------------
-#   УДАЛЕНИЕ КУРСА
-# -------------------------
+# ----------------------------
+# УДАЛЕНИЕ КУРСА
+# ----------------------------
 @app.route("/api/delete_course/<int:course_id>", methods=["DELETE"])
 def delete_course(course_id):
     conn = get_conn()
     cur = conn.cursor()
 
-    try:
-        cur.execute("DELETE FROM courses WHERE id=%s", (course_id,))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        return jsonify({"status": "error", "message": str(e)})
+    cur.execute("DELETE FROM courses WHERE id=%s", (course_id,))
+    conn.commit()
 
     cur.close()
     conn.close()
+
     return jsonify({"status": "ok"})
 
-# -------------------------
-#   АВАТАР ЗАГРУЗКА
-# -------------------------
+
+# ----------------------------
+# ЗАГРУЗКА АВАТАРКИ
+# ----------------------------
 @app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
 def upload_avatar(user_id):
     file = request.files.get("avatar")
@@ -223,8 +235,7 @@ def upload_avatar(user_id):
         return jsonify({"status": "error", "message": "Файл не найден"})
 
     filename = f"user_{user_id}.jpg"
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(filepath)
+    file.save(os.path.join(UPLOAD_FOLDER, filename))
 
     conn = get_conn()
     cur = conn.cursor()
@@ -235,15 +246,17 @@ def upload_avatar(user_id):
 
     return jsonify({"status": "ok", "avatar": filename})
 
-# -------------------------
-#   СТАТИЧЕСКИЕ ФАЙЛЫ
-# -------------------------
-@app.route("/uploads/<path:filename>")
-def uploads(filename):
+
+# ----------------------------
+# СТАТИЧЕСКИЕ ФАЙЛЫ (для картинок)
+# ----------------------------
+@app.route("/static/uploads/<path:filename>")
+def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-# -------------------------
-#   СТАРТ СЕРВЕРА
-# -------------------------
+
+# ----------------------------
+# ЗАПУСК
+# ----------------------------
 if __name__ == "__main__":
     app.run()
