@@ -1,281 +1,385 @@
 import os
-import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import psycopg2
+from urllib.parse import urlparse
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 CORS(app)
 
-# ================================
-#   ПАПКИ
-# ================================
-UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
-VIDEO_FOLDER = os.path.join(UPLOAD_FOLDER, "videos")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
+UPLOAD_FOLDER = "uploads"
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-# ================================
-#   JSON-функции
-# ================================
-def load(filename):
-    if not os.path.exists(filename):
-        with open(filename, "w") as f:
-            json.dump([], f)
-    with open(filename, "r") as f:
-        return json.load(f)
+# ============================================================
+# DB CONNECT
+# ============================================================
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-def save(filename, data):
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
+url = urlparse(DATABASE_URL)
+conn = psycopg2.connect(
+    database=url.path[1:],
+    user=url.username,
+    password=url.password,
+    host=url.hostname,
+    port=url.port
+)
 
-# ================================
-#   ФАЙЛЫ
-# ================================
-USERS = "users.json"
-COURSES = "courses.json"
-CART = "cart.json"
-PURCHASES = "purchases.json"
-LESSONS = "lessons.json"
 
-# ================================
-#   REGISTRATION
-# ================================
-@app.route("/api/register", methods=["POST"])
-def register():
-    data = request.json
-    users = load(USERS)
+def query(sql, params=(), fetch=True):
+    cur = conn.cursor()
 
-    for u in users:
-        if u["phone"] == data["phone"]:
-            return jsonify({"status": "error", "message": "Номер уже используется"})
+    try:
+        cur.execute(sql, params)
+        conn.commit()
 
-    new_user = {
-        "id": len(users) + 1,
-        "name": data["name"],
-        "phone": data["phone"],
-        "password": data["password"],
-        "avatar": None,
-        "balance": 0
-    }
+        if fetch:
+            return cur.fetchall()
+        return None
 
-    users.append(new_user)
-    save(USERS, users)
+    except Exception as e:
+        conn.rollback()
+        print("DB ERROR:", e)
+        return []
 
-    return jsonify({"status": "ok", "user": new_user})
+# ============================================================
+# STATIC FILES (IMAGES/VIDEOS)
+# ============================================================
 
-# ================================
-#   LOGIN
-# ================================
-@app.route("/api/login", methods=["POST"])
-def login():
-    data = request.json
-    users = load(USERS)
-
-    for u in users:
-        if u["phone"] == data["phone"] and u["password"] == data["password"]:
-            return jsonify({"status": "ok", "user": u})
-
-    return jsonify({"status": "error", "message": "Неверные данные"})
-
-# ================================
-#   ADD COURSE
-# ================================
-@app.route("/api/add_course", methods=["POST"])
-def add_course():
-    courses = load(COURSES)
-
-    title = request.form.get("title")
-    price = int(request.form.get("price"))
-    author = request.form.get("author")
-    description = request.form.get("description")
-    file = request.files.get("image")
-
-    if not file:
-        return jsonify({"status": "error", "message": "Нет изображения"})
-
-    filename = file.filename
-    file.save(os.path.join(UPLOAD_FOLDER, filename))
-
-    new_course = {
-        "id": len(courses) + 1,
-        "title": title,
-        "price": price,
-        "author": author,
-        "description": description,
-        "image": filename
-    }
-
-    courses.append(new_course)
-    save(COURSES, courses)
-
-    return jsonify({"status": "ok"})
-
-# ================================
-#   UPLOAD AVATAR
-# ================================
-@app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
-def upload_avatar(user_id):
-    users = load(USERS)
-    file = request.files.get("avatar")
-
-    if not file:
-        return jsonify({"status": "error", "message": "Нет файла"})
-
-    filename = f"avatar_{user_id}.jpg"
-    file.save(os.path.join(UPLOAD_FOLDER, filename))
-
-    for u in users:
-        if u["id"] == user_id:
-            u["avatar"] = filename
-
-    save(USERS, users)
-
-    return jsonify({"status": "ok", "avatar": filename})
-
-# ================================
-#   GET COURSES
-# ================================
-@app.route("/api/courses")
-def get_courses():
-    return jsonify(load(COURSES))
-
-# ================================
-#   DELETE COURSE
-# ================================
-@app.route("/api/delete_course/<int:cid>", methods=["DELETE"])
-def delete_course(cid):
-    courses = load(COURSES)
-    courses = [c for c in courses if c["id"] != cid]
-    save(COURSES, courses)
-    return jsonify({"status": "ok"})
-
-# ================================
-#   ADD BALANCE
-# ================================
-@app.route("/api/add_balance/<int:user_id>", methods=["POST"])
-def add_balance(user_id):
-    users = load(USERS)
-    amount = request.json.get("amount", 0)
-
-    for u in users:
-        if u["id"] == user_id:
-            u["balance"] += amount
-            save(USERS, users)
-            return jsonify({"status": "ok", "balance": u["balance"]})
-
-    return jsonify({"status": "error", "message": "User not found"})
-
-# ================================
-#   BUY COURSE
-# ================================
-@app.route("/api/buy_course/<int:user_id>/<int:course_id>", methods=["POST"])
-def buy_course(user_id, course_id):
-    users = load(USERS)
-    purchases = load(PURCHASES)
-    courses = load(COURSES)
-
-    user = next(u for u in users if u["id"] == user_id)
-    course = next(c for c in courses if c["id"] == course_id)
-
-    # уже куплен
-    if any(p["user_id"] == user_id and p["course_id"] == course_id for p in purchases):
-        return jsonify({"status": "error", "message": "Курс уже куплен"})
-
-    # нет денег
-    if user["balance"] < course["price"]:
-        return jsonify({"status": "error", "message": "Недостаточно средств"})
-
-    # покупка
-    user["balance"] -= course["price"]
-    purchases.append({"user_id": user_id, "course_id": course_id})
-
-    save(USERS, users)
-    save(PURCHASES, purchases)
-
-    return jsonify({"status": "ok", "balance": user["balance"]})
-
-# ================================
-#   GET PURCHASES
-# ================================
-@app.route("/api/purchases/<int:user_id>")
-def get_purchases(user_id):
-    purchases = load(PURCHASES)
-    courses = load(COURSES)
-
-    owned = []
-    for p in purchases:
-        if p["user_id"] == user_id:
-            course = next(c for c in courses if c["id"] == p["course_id"])
-            owned.append(course)
-
-    return jsonify(owned)
-
-# ================================
-#   UPLOAD LESSON
-# ================================
-@app.route("/api/upload_lesson", methods=["POST"])
-def upload_lesson():
-    lessons = load(LESSONS)
-
-    course_id = request.form.get("course_id")
-    title = request.form.get("title")
-    file = request.files.get("file")
-
-    folder = os.path.join(VIDEO_FOLDER, course_id)
-    os.makedirs(folder, exist_ok=True)
-
-    filepath = os.path.join(folder, file.filename)
-    file.save(filepath)
-
-    lesson = {
-        "id": len(lessons) + 1,
-        "course_id": int(course_id),
-        "title": title,
-        "filename": file.filename
-    }
-
-    lessons.append(lesson)
-    save(LESSONS, lessons)
-
-    return jsonify({"status": "ok"})
-
-# ================================
-#   GET LESSONS
-# ================================
-@app.route("/api/get_lessons")
-def get_lessons():
-    cid = int(request.args.get("course_id"))
-    uid = int(request.args.get("user_id"))
-
-    purchases = load(PURCHASES)
-    lessons = load(LESSONS)
-
-    if not any(p["user_id"] == uid and p["course_id"] == cid for p in purchases):
-        return jsonify({"status": "error"}), 403
-
-    course_lessons = [
-        {
-            "title": l["title"],
-            "url": f"/videos/{cid}/{l['filename']}"
-        }
-        for l in lessons if l["course_id"] == cid
-    ]
-
-    return jsonify({"status": "ok", "lessons": course_lessons})
-
-# ================================
-#   SERVE FILES
-# ================================
-@app.route("/uploads/<filename>")
-def serve_file(filename):
+@app.route("/uploads/<path:filename>")
+def uploaded_files(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-@app.route("/videos/<cid>/<filename>")
-def serve_video(cid, filename):
-    return send_from_directory(os.path.join(VIDEO_FOLDER, cid), filename)
+# ============================================================
+# REGISTER
+# ============================================================
+@app.post("/api/register")
+def register():
+    data = request.json
+    name = data.get("name")
+    phone = data.get("phone")
+    password = data.get("password")
 
-# ================================
-#   RUN
-# ================================
+    exists = query("SELECT id FROM users WHERE phone=%s", (phone,))
+    if exists:
+        return jsonify({"status": "error", "message": "Такой номер уже зарегистрирован"})
+
+    q = query("""
+        INSERT INTO users(name, phone, password, balance)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id, name, phone, balance, avatar
+    """, (name, phone, password, 0))
+
+    if q:
+        uid, nm, ph, bal, av = q[0]
+        return jsonify({
+            "status": "ok",
+            "user": {
+                "id": uid, "name": nm,
+                "phone": ph, "balance": bal,
+                "avatar": av
+            }
+        })
+
+    return jsonify({"status": "error"})
+
+# ============================================================
+# LOGIN
+# ============================================================
+@app.post("/api/login")
+def login():
+    data = request.json
+    phone = data.get("phone")
+    password = data.get("password")
+
+    q = query("""
+        SELECT id, name, phone, balance, avatar
+        FROM users WHERE phone=%s AND password=%s
+    """, (phone, password))
+
+    if q:
+        uid, nm, ph, bal, av = q[0]
+        return jsonify({
+            "status": "ok",
+            "user": {
+                "id": uid,
+                "name": nm,
+                "phone": ph,
+                "balance": bal,
+                "avatar": av
+            }
+        })
+
+    return jsonify({"status": "error", "message": "Неверный логин или пароль"})
+
+# ============================================================
+# UPLOAD AVATAR
+# ============================================================
+@app.post("/api/upload_avatar/<int:user_id>")
+def upload_avatar(user_id):
+    if "avatar" not in request.files:
+        return jsonify({"status": "error", "message": "Нет файла"})
+
+    file = request.files["avatar"]
+    fname = secure_filename(file.filename)
+    path = os.path.join(UPLOAD_FOLDER, fname)
+    file.save(path)
+
+    query("UPDATE users SET avatar=%s WHERE id=%s", (fname, user_id), fetch=False)
+
+    q = query("SELECT id,name,phone,balance,avatar FROM users WHERE id=%s", (user_id,))
+    uid, nm, ph, bal, av = q[0]
+
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": uid, "name": nm,
+            "phone": ph, "balance": bal,
+            "avatar": av
+        }
+    })
+
+# ============================================================
+# ADD COURSE (ADMIN)
+# ============================================================
+@app.post("/api/add_course")
+def add_course():
+    title = request.form.get("title")
+    price = request.form.get("price")
+    author = request.form.get("author")
+    description = request.form.get("description")
+    image = request.files.get("image")
+
+    if not image:
+        return jsonify({"status": "error", "message": "Нет изображения"})
+
+    fname = secure_filename(image.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, fname)
+    image.save(file_path)
+
+    query("""
+        INSERT INTO courses(title, price, author, description, image)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (title, price, author, description, fname), fetch=False)
+
+    return jsonify({"status": "ok"})
+
+# ============================================================
+# DELETE COURSE
+# ============================================================
+@app.delete("/api/delete_course/<int:cid>")
+def delete_course(cid):
+    query("DELETE FROM courses WHERE id=%s", (cid,), fetch=False)
+    query("DELETE FROM lessons WHERE course_id=%s", (cid,), fetch=False)
+    query("DELETE FROM purchases WHERE course_id=%s", (cid,), fetch=False)
+    return jsonify({"status": "ok"})
+
+# ============================================================
+# GET COURSES
+# ============================================================
+@app.get("/api/courses")
+def courses():
+    rows = query("SELECT id, title, price, author, description, image FROM courses")
+    result = []
+    for r in rows:
+        result.append({
+            "id": r[0],
+            "title": r[1],
+            "price": r[2],
+            "author": r[3],
+            "description": r[4],
+            "image": r[5]
+        })
+    return jsonify(result)
+
+# ============================================================
+# ADD LESSON (VIDEO)
+# ============================================================
+@app.post("/api/upload_lesson")
+def upload_lesson():
+    course_id = request.form.get("course_id")
+    title = request.form.get("title")
+    video = request.files.get("file")
+
+    if not video:
+        return jsonify({"status": "error"})
+
+    fname = secure_filename(video.filename)
+    path = os.path.join(UPLOAD_FOLDER, fname)
+    video.save(path)
+
+    query("""
+        INSERT INTO lessons(course_id, title, url)
+        VALUES (%s, %s, %s)
+    """, (course_id, title, "/" + UPLOAD_FOLDER + "/" + fname), fetch=False)
+
+    return jsonify({"status": "ok"})
+
+# ============================================================
+# GET LESSONS (Only if purchased)
+# ============================================================
+@app.get("/api/get_lessons")
+def get_lessons():
+    cid = request.args.get("course_id")
+    uid = request.args.get("user_id")
+
+    # check if user bought course
+    bought = query("SELECT id FROM purchases WHERE user_id=%s AND course_id=%s", (uid, cid))
+    if not bought:
+        return jsonify({"status": "error", "message": "Нет доступа"})
+
+    rows = query("SELECT title, url FROM lessons WHERE course_id=%s", (cid,))
+    return jsonify({
+        "status": "ok",
+        "lessons": [{"title": r[0], "url": r[1]} for r in rows]
+    })
+
+# ============================================================
+# PURCHASES
+# ============================================================
+@app.get("/api/purchases/<int:user_id>")
+def my_purchases(user_id):
+    rows = query("""
+        SELECT c.id, c.title, c.price, c.image
+        FROM purchases p
+        JOIN courses c ON p.course_id=c.id
+        WHERE p.user_id=%s
+    """, (user_id,))
+
+    result = []
+    for r in rows:
+        result.append({
+            "id": r[0],
+            "title": r[1],
+            "price": r[2],
+            "image": r[3]
+        })
+
+    return jsonify(result)
+
+# ============================================================
+# CART — ADD
+# ============================================================
+@app.post("/api/cart/add")
+def cart_add():
+    data = request.json
+    user = data["user_id"]
+    course = data["course_id"]
+
+    # check duplicate
+    exists = query("SELECT id FROM cart WHERE user_id=%s AND course_id=%s", (user, course))
+    if exists:
+        return jsonify({"status": "error", "message": "Уже в корзине"})
+
+    query("INSERT INTO cart(user_id, course_id) VALUES (%s, %s)", (user, course), fetch=False)
+    return jsonify({"status": "ok"})
+
+# ============================================================
+# CART — REMOVE
+# ============================================================
+@app.post("/api/cart/remove")
+def cart_remove():
+    data = request.json
+    user = data["user_id"]
+    course = data["course_id"]
+
+    query("DELETE FROM cart WHERE user_id=%s AND course_id=%s", (user, course), fetch=False)
+    return jsonify({"status": "ok"})
+
+# ============================================================
+# GET CART
+# ============================================================
+@app.get("/api/cart/<int:uid>")
+def cart(uid):
+    rows = query("""
+        SELECT c.id, c.title, c.price, c.image
+        FROM cart t
+        JOIN courses c ON t.course_id=c.id
+        WHERE t.user_id=%s
+    """, (uid,))
+
+    return jsonify([
+        {"id": r[0], "title": r[1], "price": r[2], "image": r[3]}
+        for r in rows
+    ])
+
+# ============================================================
+# CHECKOUT (BUY COURSES)
+# ============================================================
+@app.post("/api/cart/checkout/<int:user_id>")
+def checkout(user_id):
+
+    # get cart
+    cart = query("""
+        SELECT c.id, c.price FROM cart t
+        JOIN courses c ON t.course_id=c.id
+        WHERE t.user_id=%s
+    """, (user_id,))
+
+    if not cart:
+        return jsonify({"status": "error", "message": "Корзина пуста"})
+
+    # get user balance
+    balance = query("SELECT balance FROM users WHERE id=%s", (user_id,))
+    balance = balance[0][0]
+
+    total = sum([c[1] for c in cart])
+
+    if balance < total:
+        return jsonify({"status": "error", "message": "Недостаточно средств"})
+
+    # write purchases
+    for course_id, price in cart:
+        # ignore duplicates
+        exists = query("SELECT id FROM purchases WHERE user_id=%s AND course_id=%s", (user_id, course_id))
+        if not exists:
+            query("INSERT INTO purchases(user_id, course_id) VALUES (%s,%s)", (user_id, course_id), fetch=False)
+
+    # remove from cart
+    query("DELETE FROM cart WHERE user_id=%s", (user_id,), fetch=False)
+
+    # reduce balance
+    newbal = balance - total
+    query("UPDATE users SET balance=%s WHERE id=%s", (newbal, user_id), fetch=False)
+
+    # return updated user
+    u = query("SELECT id,name,phone,balance,avatar FROM users WHERE id=%s", (user_id,))
+    uid, nm, ph, bal, av = u[0]
+
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": uid, "name": nm,
+            "phone": ph, "balance": bal,
+            "avatar": av
+        }
+    })
+
+# ============================================================
+# TOP UP BALANCE
+# ============================================================
+@app.post("/api/topup")
+def topup():
+    data = request.json
+    user_id = data["user_id"]
+    amount = int(data["amount"])
+
+    query("UPDATE users SET balance = balance + %s WHERE id=%s", (amount, user_id), fetch=False)
+
+    u = query("SELECT id,name,phone,balance,avatar FROM users WHERE id=%s", (user_id,))
+    uid, nm, ph, bal, av = u[0]
+
+    return jsonify({
+        "status": "ok",
+        "user": {
+            "id": uid, "name": nm, "phone": ph,
+            "balance": bal, "avatar": av
+        }
+    })
+
+# ============================================================
+# RUN
+# ============================================================
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000)
