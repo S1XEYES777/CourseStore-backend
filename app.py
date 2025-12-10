@@ -9,27 +9,26 @@ CORS(app)
 # ================================
 #   ПАПКИ
 # ================================
-UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+BASE_DIR = os.getcwd()
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 VIDEO_FOLDER = os.path.join(UPLOAD_FOLDER, "videos")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
-
 
 # ================================
 #   JSON-функции
 # ================================
 def load(filename):
     if not os.path.exists(filename):
-        with open(filename, "w") as f:
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump([], f)
-    with open(filename, "r") as f:
+    with open(filename, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def save(filename, data):
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
-
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
 
 # ================================
 #   ФАЙЛЫ
@@ -84,32 +83,6 @@ def login():
 
 
 # ================================
-#   UPLOAD AVATAR
-# ================================
-@app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
-def upload_avatar(user_id):
-    users = load(USERS)
-    file = request.files.get("avatar")
-
-    if not file:
-        return jsonify({"status": "error", "message": "Файл не найден"})
-
-    ext = file.filename.split(".")[-1]
-    filename = f"avatar_{user_id}.{ext}"
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(filepath)
-
-    for u in users:
-        if u["id"] == user_id:
-            u["avatar"] = filename
-            break
-
-    save(USERS, users)
-
-    return jsonify({"status": "ok", "url": f"/uploads/{filename}"})
-
-
-# ================================
 #   ADD COURSE (ADMIN)
 # ================================
 @app.route("/api/add_course", methods=["POST"])
@@ -125,8 +98,7 @@ def add_course():
     if not file:
         return jsonify({"status": "error", "message": "Нет изображения"})
 
-    ext = file.filename.split(".")[-1]
-    filename = f"course_{len(courses)+1}.{ext}"
+    filename = file.filename
     file.save(os.path.join(UPLOAD_FOLDER, filename))
 
     course = {
@@ -172,6 +144,22 @@ def cart_add():
     cart = load(CART)
 
     cart.append(data)
+    save(CART, cart)
+
+    return jsonify({"status": "ok"})
+
+
+# ================================
+#   CART REMOVE (для removeFromCart в JS)
+# ================================
+@app.route("/api/cart/remove", methods=["POST"])
+def cart_remove():
+    data = request.json
+    user_id = data["user_id"]
+    course_id = data["course_id"]
+
+    cart = load(CART)
+    cart = [c for c in cart if not (c["user_id"] == user_id and c["course_id"] == course_id)]
     save(CART, cart)
 
     return jsonify({"status": "ok"})
@@ -242,6 +230,9 @@ def upload_lesson():
     title = request.form.get("title")
     file = request.files.get("file")
 
+    if not file:
+        return jsonify({"status": "error", "message": "Нет файла"})
+
     folder = os.path.join(VIDEO_FOLDER, course_id)
     os.makedirs(folder, exist_ok=True)
 
@@ -272,6 +263,7 @@ def get_lessons():
     purchases = load(PURCHASES)
     lessons = load(LESSONS)
 
+    # проверка покупки
     if not any(p["user_id"] == uid and p["course_id"] == cid for p in purchases):
         return jsonify({"status": "error", "message": "not purchased"}), 403
 
@@ -296,11 +288,42 @@ def serve_video(cid, filename):
 
 
 # ================================
-#   STATIC UPLOAD FILES
+#   STATIC UPLOAD FILES (КУРСЫ + АВАТАРЫ)
 # ================================
 @app.route("/uploads/<filename>")
 def serve_image(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+# ================================
+#   UPLOAD AVATAR
+# ================================
+@app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
+def upload_avatar(user_id):
+    users = load(USERS)
+    file = request.files.get("avatar")
+
+    if not file:
+        return jsonify({"status": "error", "message": "Файл не получен"})
+
+    # имя файла, чтобы не пересекались
+    filename = f"avatar_{user_id}_{file.filename}"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
+
+    updated_user = None
+    for u in users:
+        if u["id"] == user_id:
+            u["avatar"] = filename
+            updated_user = u
+            break
+
+    if not updated_user:
+        return jsonify({"status": "error", "message": "Пользователь не найден"})
+
+    save(USERS, users)
+
+    return jsonify({"status": "ok", "avatar": filename, "user": updated_user})
 
 
 # ================================
