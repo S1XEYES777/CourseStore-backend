@@ -47,14 +47,15 @@ def register():
 
     for u in users:
         if u["phone"] == data["phone"]:
-            return jsonify({"status": "error", "message": "Номер занят"})
+            return jsonify({"status": "error", "message": "Номер уже используется"})
 
     new_user = {
         "id": len(users) + 1,
         "name": data["name"],
         "phone": data["phone"],
         "password": data["password"],
-        "avatar": None
+        "avatar": None,
+        "balance": 0
     }
 
     users.append(new_user)
@@ -74,7 +75,7 @@ def login():
         if u["phone"] == data["phone"] and u["password"] == data["password"]:
             return jsonify({"status": "ok", "user": u})
 
-    return jsonify({"status": "error", "message": "Неверный логин или пароль"})
+    return jsonify({"status": "error", "message": "Неверные данные"})
 
 # ================================
 #   ADD COURSE
@@ -84,7 +85,7 @@ def add_course():
     courses = load(COURSES)
 
     title = request.form.get("title")
-    price = request.form.get("price")
+    price = int(request.form.get("price"))
     author = request.form.get("author")
     description = request.form.get("description")
     file = request.files.get("image")
@@ -95,30 +96,30 @@ def add_course():
     filename = file.filename
     file.save(os.path.join(UPLOAD_FOLDER, filename))
 
-    course = {
+    new_course = {
         "id": len(courses) + 1,
         "title": title,
-        "price": int(price),
+        "price": price,
         "author": author,
         "description": description,
         "image": filename
     }
 
-    courses.append(course)
+    courses.append(new_course)
     save(COURSES, courses)
 
     return jsonify({"status": "ok"})
 
 # ================================
-#   UPLOAD AVATAR (как add_course)
+#   UPLOAD AVATAR
 # ================================
 @app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
 def upload_avatar(user_id):
     users = load(USERS)
-
     file = request.files.get("avatar")
+
     if not file:
-        return jsonify({"status": "error", "message": "Нет изображения"})
+        return jsonify({"status": "error", "message": "Нет файла"})
 
     filename = f"avatar_{user_id}.jpg"
     file.save(os.path.join(UPLOAD_FOLDER, filename))
@@ -149,50 +150,49 @@ def delete_course(cid):
     return jsonify({"status": "ok"})
 
 # ================================
-#   CART ADD
+#   ADD BALANCE
 # ================================
-@app.route("/api/cart/add", methods=["POST"])
-def cart_add():
-    data = request.json
-    cart = load(CART)
-    cart.append(data)
-    save(CART, cart)
-    return jsonify({"status": "ok"})
+@app.route("/api/add_balance/<int:user_id>", methods=["POST"])
+def add_balance(user_id):
+    users = load(USERS)
+    amount = request.json.get("amount", 0)
+
+    for u in users:
+        if u["id"] == user_id:
+            u["balance"] += amount
+            save(USERS, users)
+            return jsonify({"status": "ok", "balance": u["balance"]})
+
+    return jsonify({"status": "error", "message": "User not found"})
 
 # ================================
-#   GET CART
+#   BUY COURSE
 # ================================
-@app.route("/api/cart/<int:user_id>")
-def get_cart(user_id):
-    cart = load(CART)
+@app.route("/api/buy_course/<int:user_id>/<int:course_id>", methods=["POST"])
+def buy_course(user_id, course_id):
+    users = load(USERS)
+    purchases = load(PURCHASES)
     courses = load(COURSES)
 
-    items = []
-    for c in cart:
-        if c["user_id"] == user_id:
-            course = next(x for x in courses if x["id"] == c["course_id"])
-            items.append(course)
+    user = next(u for u in users if u["id"] == user_id)
+    course = next(c for c in courses if c["id"] == course_id)
 
-    return jsonify(items)
+    # уже куплен
+    if any(p["user_id"] == user_id and p["course_id"] == course_id for p in purchases):
+        return jsonify({"status": "error", "message": "Курс уже куплен"})
 
-# ================================
-#   CHECKOUT
-# ================================
-@app.route("/api/cart/checkout/<int:user_id>", methods=["POST"])
-def checkout(user_id):
-    cart = load(CART)
-    purchases = load(PURCHASES)
+    # нет денег
+    if user["balance"] < course["price"]:
+        return jsonify({"status": "error", "message": "Недостаточно средств"})
 
-    for item in cart:
-        if item["user_id"] == user_id:
-            purchases.append(item)
+    # покупка
+    user["balance"] -= course["price"]
+    purchases.append({"user_id": user_id, "course_id": course_id})
 
-    cart = [c for c in cart if c["user_id"] != user_id]
-
+    save(USERS, users)
     save(PURCHASES, purchases)
-    save(CART, cart)
 
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "balance": user["balance"]})
 
 # ================================
 #   GET PURCHASES
@@ -205,7 +205,7 @@ def get_purchases(user_id):
     owned = []
     for p in purchases:
         if p["user_id"] == user_id:
-            course = next(x for x in courses if x["id"] == p["course_id"])
+            course = next(c for c in courses if c["id"] == p["course_id"])
             owned.append(course)
 
     return jsonify(owned)
@@ -240,7 +240,7 @@ def upload_lesson():
     return jsonify({"status": "ok"})
 
 # ================================
-#   GET LESSONS (if purchased)
+#   GET LESSONS
 # ================================
 @app.route("/api/get_lessons")
 def get_lessons():
@@ -251,7 +251,7 @@ def get_lessons():
     lessons = load(LESSONS)
 
     if not any(p["user_id"] == uid and p["course_id"] == cid for p in purchases):
-        return jsonify({"status": "error", "message": "not purchased"}), 403
+        return jsonify({"status": "error"}), 403
 
     course_lessons = [
         {
@@ -266,14 +266,13 @@ def get_lessons():
 # ================================
 #   SERVE FILES
 # ================================
+@app.route("/uploads/<filename>")
+def serve_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+
 @app.route("/videos/<cid>/<filename>")
 def serve_video(cid, filename):
-    folder = os.path.join(VIDEO_FOLDER, cid)
-    return send_from_directory(folder, filename)
-
-@app.route("/uploads/<filename>")
-def serve_image(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
+    return send_from_directory(os.path.join(VIDEO_FOLDER, cid), filename)
 
 # ================================
 #   RUN
