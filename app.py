@@ -30,6 +30,7 @@ def save(filename, data):
     with open(filename, "w") as f:
         json.dump(data, f, indent=4)
 
+
 # ================================
 #   ФАЙЛЫ
 # ================================
@@ -83,6 +84,32 @@ def login():
 
 
 # ================================
+#   UPLOAD AVATAR
+# ================================
+@app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
+def upload_avatar(user_id):
+    users = load(USERS)
+    file = request.files.get("avatar")
+
+    if not file:
+        return jsonify({"status": "error", "message": "Файл не найден"})
+
+    ext = file.filename.split(".")[-1]
+    filename = f"avatar_{user_id}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
+
+    for u in users:
+        if u["id"] == user_id:
+            u["avatar"] = filename
+            break
+
+    save(USERS, users)
+
+    return jsonify({"status": "ok", "url": f"/uploads/{filename}"})
+
+
+# ================================
 #   ADD COURSE (ADMIN)
 # ================================
 @app.route("/api/add_course", methods=["POST"])
@@ -98,7 +125,8 @@ def add_course():
     if not file:
         return jsonify({"status": "error", "message": "Нет изображения"})
 
-    filename = file.filename
+    ext = file.filename.split(".")[-1]
+    filename = f"course_{len(courses)+1}.{ext}"
     file.save(os.path.join(UPLOAD_FOLDER, filename))
 
     course = {
@@ -244,7 +272,6 @@ def get_lessons():
     purchases = load(PURCHASES)
     lessons = load(LESSONS)
 
-    # проверка покупки
     if not any(p["user_id"] == uid and p["course_id"] == cid for p in purchases):
         return jsonify({"status": "error", "message": "not purchased"}), 403
 
