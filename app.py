@@ -7,16 +7,18 @@ from urllib.parse import urlparse
 app = Flask(__name__)
 CORS(app)
 
-# =====================================================
-# ПРАВИЛЬНАЯ ПАПКА ДЛЯ ЗАГРУЗОК ФОТО (Работает на Render)
-# =====================================================
+# ==========================================
+# ПАПКИ ДЛЯ МЕДИА
+# ==========================================
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+UPLOAD_VIDEO_FOLDER = os.path.join(UPLOAD_FOLDER, "videos")
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(UPLOAD_VIDEO_FOLDER, exist_ok=True)
 
-
-# =====================================================
-# ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ РЕНДЕРА
-# =====================================================
+# ==========================================
+# ПОДКЛЮЧЕНИЕ К БАЗЕ
+# ==========================================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_conn():
@@ -30,10 +32,9 @@ def get_conn():
         sslmode="require"
     )
 
-
-# =====================================================
-# СОЗДАЁМ ТАБЛИЦЫ
-# =====================================================
+# ==========================================
+# СОЗДАНИЕ ТАБЛИЦ
+# ==========================================
 def create_tables():
     conn = get_conn()
     cur = conn.cursor()
@@ -72,6 +73,16 @@ def create_tables():
         id SERIAL PRIMARY KEY,
         user_id INTEGER,
         course_id INTEGER
+    );
+    """)
+
+    # ★ ★ ★ НОВАЯ ТАБЛИЦА ДЛЯ УРОКОВ ★ ★ ★
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS lessons (
+        id SERIAL PRIMARY KEY,
+        course_id INTEGER,
+        title TEXT,
+        filename TEXT
     );
     """)
 
@@ -151,6 +162,7 @@ def login():
     }})
 
 
+
 # =====================================================
 #  ДОБАВЛЕНИЕ КУРСА (АДМИН)
 # =====================================================
@@ -212,6 +224,7 @@ def courses():
         })
 
     return jsonify(result)
+
 
 
 # =====================================================
@@ -313,7 +326,7 @@ def purchases(user_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT courses.title, courses.price
+        SELECT courses.id, courses.title, courses.price
         FROM purchases
         JOIN courses ON purchases.course_id = courses.id
         WHERE purchases.user_id = %s
@@ -325,7 +338,7 @@ def purchases(user_id):
 
     result = []
     for r in rows:
-        result.append({"title": r[0], "price": r[1]})
+        result.append({"id": r[0], "title": r[1], "price": r[2]})
 
     return jsonify(result)
 
@@ -356,7 +369,95 @@ def upload_avatar():
 
 
 # =====================================================
-# ОТДАЧА ФАЙЛОВ uploads
+# ★ ★ ★ ЗАГРУЗКА ВИДЕО УРОКА ★ ★ ★
+# =====================================================
+@app.route("/api/upload_lesson", methods=["POST"])
+def upload_lesson():
+    course_id = request.form.get("course_id")
+    title = request.form.get("title")
+    file = request.files.get("file")
+
+    if not course_id or not title or not file:
+        return jsonify({"status": "error", "message": "Missing fields"}), 400
+
+    folder = os.path.join(UPLOAD_VIDEO_FOLDER, course_id)
+    os.makedirs(folder, exist_ok=True)
+
+    filepath = os.path.join(folder, file.filename)
+    file.save(filepath)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO lessons (course_id, title, filename)
+        VALUES (%s, %s, %s)
+    """, (course_id, title, file.filename))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# =====================================================
+# ★ ★ ★ ПОЛУЧЕНИЕ УРОКОВ КУРСА ★ ★ ★
+# =====================================================
+@app.route("/api/get_lessons")
+def get_lessons():
+    course_id = request.args.get("course_id")
+    user_id = request.args.get("user_id")
+
+    # Проверяем покупку
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT 1 FROM purchases 
+        WHERE user_id=%s AND course_id=%s
+    """, (user_id, course_id))
+    
+    purchased = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not purchased:
+        return jsonify({"status": "error", "message": "not purchased"}), 403
+
+    # Если купил → выдаём уроки
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, title, filename 
+        FROM lessons 
+        WHERE course_id=%s
+    """, (course_id,))
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    lessons = []
+    for l in rows:
+        lessons.append({
+            "id": l[0],
+            "title": l[1],
+            "url": f"/videos/{course_id}/{l[2]}"
+        })
+
+    return jsonify({"status": "ok", "lessons": lessons})
+
+
+# =====================================================
+# ★ ★ ★ ОТДАЧА ВИДЕО ★ ★ ★
+# =====================================================
+@app.route("/videos/<course_id>/<filename>")
+def serve_video(course_id, filename):
+    folder = os.path.join(UPLOAD_VIDEO_FOLDER, course_id)
+    return send_from_directory(folder, filename)
+
+
+# =====================================================
+# ОТДАЧА АВАТАРОВ
 # =====================================================
 @app.route("/uploads/<filename>")
 def uploaded_files(filename):
@@ -364,7 +465,7 @@ def uploaded_files(filename):
 
 
 # =====================================================
-#  СТАРТ
+# СТАРТ
 # =====================================================
 if __name__ == "__main__":
     app.run()
