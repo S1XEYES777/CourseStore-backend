@@ -3,32 +3,33 @@ import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
-# -----------------------
+# ------------------------------------------------------------
 # НАСТРОЙКИ
-# -----------------------
+# ------------------------------------------------------------
 DATA_FILE = "data.json"
 UPLOAD_FOLDER = "uploads"
 AVATAR_FOLDER = os.path.join(UPLOAD_FOLDER, "avatars")
 COURSE_IMAGE_FOLDER = os.path.join(UPLOAD_FOLDER, "course_images")
+VIDEO_FOLDER = os.path.join(UPLOAD_FOLDER, "videos")
 
+# создаём папки
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(AVATAR_FOLDER, exist_ok=True)
 os.makedirs(COURSE_IMAGE_FOLDER, exist_ok=True)
+os.makedirs(VIDEO_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 CORS(app)
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-
-# -----------------------
-# ФУНКЦИИ РАБОТЫ С ФАЙЛОМ
-# -----------------------
+# ------------------------------------------------------------
+# ХРАНИЛИЩЕ (JSON)
+# ------------------------------------------------------------
 def load_data():
     if not os.path.exists(DATA_FILE):
         data = {
             "users": [],
             "courses": [],
-            "carts": {}  # user_id -> [course_id, ...]
+            "carts": {}  # user_id -> [course_id]
         }
         save_data(data)
         return data
@@ -47,11 +48,10 @@ def next_id(items):
     return max(item["id"] for item in items) + 1
 
 
-# -----------------------
-# ВСПОМОГАТЕЛЬНОЕ
-# -----------------------
+# ------------------------------------------------------------
+# Упрощенный ответ пользователя
+# ------------------------------------------------------------
 def public_user(user):
-    # что отправляем на фронт
     return {
         "id": user["id"],
         "phone": user["phone"],
@@ -59,21 +59,21 @@ def public_user(user):
         "balance": user.get("balance", 0),
         "avatar": user.get("avatar"),
         "my_courses": user.get("my_courses", []),
-        "is_admin": user.get("is_admin", False),
+        "is_admin": user.get("is_admin", False)
     }
 
 
-# -----------------------
-# СЕРВИСНЫЕ МАРШРУТЫ
-# -----------------------
+# ------------------------------------------------------------
+# Статус сервера
+# ------------------------------------------------------------
 @app.route("/api/status")
 def status():
     return jsonify({"status": "ok"})
 
 
-# -----------------------
+# ------------------------------------------------------------
 # РЕГИСТРАЦИЯ / ЛОГИН
-# -----------------------
+# ------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register():
     data = load_data()
@@ -84,12 +84,13 @@ def register():
     name = body.get("name", "").strip() or "Пользователь"
 
     if not phone or not password:
-        return jsonify({"status": "error", "message": "Телефон и пароль обязательны"}), 400
+        return jsonify({"status": "error", "message": "Введите телефон и пароль"}), 400
 
     if any(u["phone"] == phone for u in data["users"]):
-        return jsonify({"status": "error", "message": "Такой телефон уже зарегистрирован"}), 400
+        return jsonify({"status": "error", "message": "Номер уже зарегистрирован"}), 400
 
     user_id = next_id(data["users"])
+
     is_admin = (phone == "77750476284" and password == "777")
 
     user = {
@@ -100,8 +101,9 @@ def register():
         "balance": 0,
         "avatar": None,
         "my_courses": [],
-        "is_admin": is_admin,
+        "is_admin": is_admin
     }
+
     data["users"].append(user)
     save_data(data)
 
@@ -118,18 +120,20 @@ def login():
 
     for u in data["users"]:
         if u["phone"] == phone and u["password"] == password:
-            # админ, если совпадают
+
+            # обновляем админа
             if phone == "77750476284" and password == "777":
                 u["is_admin"] = True
                 save_data(data)
+
             return jsonify({"status": "ok", "user": public_user(u)})
 
-    return jsonify({"status": "error", "message": "Неверный телефон или пароль"}), 400
+    return jsonify({"status": "error", "message": "Неверный номер или пароль"}), 400
 
 
-# -----------------------
+# ------------------------------------------------------------
 # КУРСЫ
-# -----------------------
+# ------------------------------------------------------------
 @app.route("/api/courses", methods=["GET"])
 def get_courses():
     data = load_data()
@@ -145,9 +149,9 @@ def get_course(course_id):
     return jsonify({"status": "error", "message": "Курс не найден"}), 404
 
 
-# -----------------------
+# ------------------------------------------------------------
 # КОРЗИНА
-# -----------------------
+# ------------------------------------------------------------
 @app.route("/api/cart/<int:user_id>", methods=["GET"])
 def get_cart(user_id):
     data = load_data()
@@ -161,10 +165,11 @@ def add_to_cart():
     data = load_data()
     body = request.get_json(force=True)
 
-    user_id = int(body.get("user_id", 0))
-    course_id = int(body.get("course_id", 0))
+    user_id = int(body.get("user_id"))
+    course_id = int(body.get("course_id"))
 
     user = next((u for u in data["users"] if u["id"] == user_id), None)
+
     if not user:
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
@@ -187,10 +192,10 @@ def remove_from_cart():
     data = load_data()
     body = request.get_json(force=True)
 
-    user_id = int(body.get("user_id", 0))
-    course_id = int(body.get("course_id", 0))
+    user_id = str(body.get("user_id"))
+    course_id = int(body.get("course_id"))
 
-    cart = data["carts"].setdefault(str(user_id), [])
+    cart = data["carts"].setdefault(user_id, [])
     if course_id in cart:
         cart.remove(course_id)
         save_data(data)
@@ -198,25 +203,25 @@ def remove_from_cart():
     return jsonify({"status": "ok"})
 
 
-# -----------------------
-# БАЛАНС И ПОКУПКА
-# -----------------------
+# ------------------------------------------------------------
+# БАЛАНС / ПОКУПКА
+# ------------------------------------------------------------
 @app.route("/api/balance/topup", methods=["POST"])
 def balance_topup():
     data = load_data()
     body = request.get_json(force=True)
 
-    user_id = int(body.get("user_id", 0))
+    user_id = int(body.get("user_id"))
     amount = int(body.get("amount", 0))
+
+    if amount <= 0:
+        return jsonify({"status": "error", "message": "Введите корректную сумму"}), 400
 
     user = next((u for u in data["users"] if u["id"] == user_id), None)
     if not user:
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
-    if amount <= 0:
-        return jsonify({"status": "error", "message": "Некорректная сумма"}), 400
-
-    user["balance"] = user.get("balance", 0) + amount
+    user["balance"] += amount
     save_data(data)
 
     return jsonify({"status": "ok", "user": public_user(user)})
@@ -227,24 +232,28 @@ def purchase():
     data = load_data()
     body = request.get_json(force=True)
 
-    user_id = int(body.get("user_id", 0))
+    user_id = int(body.get("user_id"))
     user = next((u for u in data["users"] if u["id"] == user_id), None)
+
     if not user:
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
-    cart_ids = data["carts"].get(str(user_id), [])
-    if not cart_ids:
+    cart = data["carts"].get(str(user_id), [])
+    if not cart:
         return jsonify({"status": "error", "message": "Корзина пуста"}), 400
 
     courses_map = {c["id"]: c for c in data["courses"]}
-    total = sum(courses_map[cid]["price"] for cid in cart_ids if cid in courses_map)
+    total = sum(courses_map[cid]["price"] for cid in cart)
 
-    if user.get("balance", 0) < total:
+    if user["balance"] < total:
         return jsonify({"status": "error", "message": "Недостаточно средств"}), 400
 
+    # списываем средства
     user["balance"] -= total
+
+    # добавляем купленные курсы
     my = user.setdefault("my_courses", [])
-    for cid in cart_ids:
+    for cid in cart:
         if cid not in my:
             my.append(cid)
 
@@ -257,19 +266,20 @@ def purchase():
 @app.route("/api/my-courses/<int:user_id>", methods=["GET"])
 def my_courses(user_id):
     data = load_data()
+
     user = next((u for u in data["users"] if u["id"] == user_id), None)
     if not user:
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
 
-    my_ids = user.get("my_courses", [])
-    courses = [c for c in data["courses"] if c["id"] in my_ids]
+    ids = user.get("my_courses", [])
+    courses = [c for c in data["courses"] if c["id"] in ids]
 
     return jsonify({"status": "ok", "courses": courses})
 
 
-# -----------------------
-# АДМИН: КУРСЫ
-# -----------------------
+# ------------------------------------------------------------
+# ПРОВЕРКА АДМИНА
+# ------------------------------------------------------------
 def require_admin(user_id, data):
     user = next((u for u in data["users"] if u["id"] == user_id), None)
     if not user or not user.get("is_admin", False):
@@ -277,13 +287,16 @@ def require_admin(user_id, data):
     return user
 
 
+# ------------------------------------------------------------
+# АДМИН: ДОБАВЛЕНИЕ КУРСА
+# ------------------------------------------------------------
 @app.route("/api/admin/add_course", methods=["POST"])
 def admin_add_course():
     data = load_data()
 
-    admin_id = int(request.form.get("admin_id", 0))
+    admin_id = int(request.form.get("admin_id"))
     if not require_admin(admin_id, data):
-        return jsonify({"status": "error", "message": "Нет прав"}), 403
+        return jsonify({"status": "error", "message": "Нет доступа"}), 403
 
     title = request.form.get("title", "").strip()
     description = request.form.get("description", "").strip()
@@ -292,64 +305,77 @@ def admin_add_course():
     if not title:
         return jsonify({"status": "error", "message": "Название обязательно"}), 400
 
+    # сохраняем фото курса
     image_file = request.files.get("image")
     image_name = None
     if image_file:
         image_name = f"course_{next_id(data['courses'])}_{image_file.filename}"
-        path = os.path.join(COURSE_IMAGE_FOLDER, image_name)
-        image_file.save(path)
+        image_file.save(os.path.join(COURSE_IMAGE_FOLDER, image_name))
 
-    course_id = next_id(data["courses"])
     course = {
-        "id": course_id,
+        "id": next_id(data["courses"]),
         "title": title,
         "description": description,
         "price": price,
-        "image": image_name,  # хранится имя файла
-        "lessons": []  # список уроков
+        "image": image_name,
+        "lessons": []
     }
+
     data["courses"].append(course)
     save_data(data)
 
     return jsonify({"status": "ok", "course": course})
 
 
+# ------------------------------------------------------------
+# АДМИН: ДОБАВЛЕНИЕ УРОКА (ФАЙЛ ВИДЕО)
+# ------------------------------------------------------------
 @app.route("/api/admin/add_lesson", methods=["POST"])
 def admin_add_lesson():
     data = load_data()
 
-    admin_id = int(request.form.get("admin_id", 0))
+    admin_id = int(request.form.get("admin_id"))
     if not require_admin(admin_id, data):
-        return jsonify({"status": "error", "message": "Нет прав"}), 403
+        return jsonify({"status": "error", "message": "Нет доступа"}), 403
 
-    course_id = int(request.form.get("course_id", 0))
+    course_id = int(request.form.get("course_id"))
     title = request.form.get("title", "").strip()
-    video_url = request.form.get("video_url", "").strip()  # можно просто ссылку на YouTube
 
     course = next((c for c in data["courses"] if c["id"] == course_id), None)
     if not course:
         return jsonify({"status": "error", "message": "Курс не найден"}), 404
 
     if not title:
-        return jsonify({"status": "error", "message": "Название урока обязательно"}), 400
+        return jsonify({"status": "error", "message": "Введите название урока"}), 400
 
-    lesson_id = len(course["lessons"]) + 1
-    course["lessons"].append({
-        "id": lesson_id,
+    video_file = request.files.get("video")
+    video_name = None
+
+    if video_file:
+        ext = video_file.filename.split(".")[-1]
+        video_name = f"lesson_{course_id}_{len(course['lessons']) + 1}.{ext}"
+        video_path = os.path.join(VIDEO_FOLDER, video_name)
+        video_file.save(video_path)
+
+    lesson = {
+        "id": len(course["lessons"]) + 1,
         "title": title,
-        "video_url": video_url,
-    })
+        "video": video_name
+    }
 
+    course["lessons"].append(lesson)
     save_data(data)
+
     return jsonify({"status": "ok", "course": course})
 
 
-# -----------------------
+# ------------------------------------------------------------
 # АВАТАР
-# -----------------------
+# ------------------------------------------------------------
 @app.route("/api/upload_avatar/<int:user_id>", methods=["POST"])
 def upload_avatar(user_id):
     data = load_data()
+
     user = next((u for u in data["users"] if u["id"] == user_id), None)
     if not user:
         return jsonify({"status": "error", "message": "Пользователь не найден"}), 404
@@ -359,8 +385,7 @@ def upload_avatar(user_id):
         return jsonify({"status": "error", "message": "Файл не найден"}), 400
 
     filename = f"user_{user_id}_{file.filename}"
-    path = os.path.join(AVATAR_FOLDER, filename)
-    file.save(path)
+    file.save(os.path.join(AVATAR_FOLDER, filename))
 
     user["avatar"] = filename
     save_data(data)
@@ -368,13 +393,21 @@ def upload_avatar(user_id):
     return jsonify({"status": "ok", "user": public_user(user)})
 
 
-# -----------------------
+# ------------------------------------------------------------
 # РАЗДАЧА ФАЙЛОВ
-# -----------------------
+# ------------------------------------------------------------
 @app.route("/uploads/<path:filename>")
-def uploaded_file(filename):
+def serve_uploads(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 
+@app.route("/videos/<path:filename>")
+def serve_videos(filename):
+    return send_from_directory(VIDEO_FOLDER, filename)
+
+
+# ------------------------------------------------------------
+# ЗАПУСК (для Render)
+# ------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
